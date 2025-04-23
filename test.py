@@ -27,64 +27,68 @@ prev_time = time.time()
 frame_count = 0
 
 print("Starting detection loop...")
-while True:
-    # Capture frame
-    ret, image = cam.read()
-    
-    if ret:
-        # Process every 5th frame for better performance
-        if frame_count % 5 == 0:
-            # Save frame temporarily for Roboflow
-            cv2.imwrite(temp_file, image)
-            
-            try:
-                # Run prediction on saved frame
-                predictions = model.predict(temp_file, confidence=40, overlap=30).json()
+print("Press Ctrl+C to stop")
+
+try:
+    while True:
+        # Capture frame
+        ret, image = cam.read()
+        
+        if ret:
+            # Only process every 5th frame for better performance
+            if frame_count % 5 == 0:
+                # Save frame temporarily for Roboflow
+                cv2.imwrite(temp_file, image)
                 
-                # Draw predictions on frame
-                for prediction in predictions['predictions']:
-                    # Get coordinates
-                    x1 = prediction['x'] - prediction['width'] / 2
-                    y1 = prediction['y'] - prediction['height'] / 2
-                    x2 = prediction['x'] + prediction['width'] / 2
-                    y2 = prediction['y'] + prediction['height'] / 2
+                try:
+                    # Run prediction on saved frame
+                    predictions = model.predict(temp_file, confidence=40, overlap=30).json()
                     
-                    # Convert to integers
-                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    # Clear the console and print detection info
+                    os.system('clear')  # 'cls' on Windows
                     
-                    # Draw bounding box
-                    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    # Calculate and display FPS
+                    current_time = time.time()
+                    fps = 1 / (current_time - prev_time)
+                    prev_time = current_time
                     
-                    # Add label with confidence
-                    label = f"{prediction['class']} {prediction['confidence']:.2f}"
-                    cv2.putText(image, label, (x1, y1-10), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            except Exception as e:
-                print(f"Error: {str(e)}")
-        
-        # Calculate and display FPS
-        current_time = time.time()
-        fps = 1 / (current_time - prev_time)
-        prev_time = current_time
-        
-        # Display FPS
-        cv2.putText(image, f"FPS: {int(fps)}", (10, 30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        
-        # Display the resulting frame
-        cv2.imshow('Camera Feed', image)
-        
-        # Increment frame counter
-        frame_count += 1
-    
-    # Break loop with 'q' key
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+                    print(f"FPS: {int(fps)}")
+                    print(f"Frame size: {image.shape[1]}x{image.shape[0]}")
+                    print("\nDetections:")
+                    
+                    if len(predictions['predictions']) == 0:
+                        print("No objects detected")
+                    
+                    # Print detection results
+                    for prediction in predictions['predictions']:
+                        # Get coordinates
+                        x1 = prediction['x'] - prediction['width'] / 2
+                        y1 = prediction['y'] - prediction['height'] / 2
+                        x2 = prediction['x'] + prediction['width'] / 2
+                        y2 = prediction['y'] + prediction['height'] / 2
+                        
+                        # Convert to integers
+                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                        
+                        # Print detection info
+                        print(f"* {prediction['class']} (confidence: {prediction['confidence']:.2f})")
+                        print(f"  Position: ({x1},{y1}) to ({x2},{y2})")
+                        
+                except Exception as e:
+                    print(f"Error during prediction: {str(e)}")
+            
+            # Increment frame counter
+            frame_count += 1
+            
+            # Small delay to reduce CPU usage
+            time.sleep(0.01)
+
+except KeyboardInterrupt:
+    print("\nStopping detection...")
 
 # Clean up
 print("Cleaning up...")
 cam.release()
-cv2.destroyAllWindows()
 if os.path.exists(temp_file):
     os.remove(temp_file)
 print("Done!")
