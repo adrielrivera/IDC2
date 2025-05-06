@@ -14,18 +14,30 @@ def prediction_worker():
     while not stop_threads:
         try:
             if not frame_queue.empty():
+                print("\n--- Starting new prediction ---")
+                start_time = time.time()
+                
                 frame = frame_queue.get()
+                print(f"Frame retrieved from queue: {time.time() - start_time:.2f} seconds")
+                
                 # Save frame temporarily for Roboflow
                 cv2.imwrite(temp_file, frame)
+                print(f"Frame saved to disk: {time.time() - start_time:.2f} seconds")
                 
                 # Run prediction on saved frame
+                print("Starting Roboflow prediction...")
                 predictions = model.predict(temp_file, confidence=40, overlap=30).json()
+                print(f"Roboflow prediction completed: {time.time() - start_time:.2f} seconds")
                 
                 # Put predictions in the queue
                 prediction_queue.put(predictions)
+                print(f"Prediction added to queue: {time.time() - start_time:.2f} seconds")
                 
                 # Don't block if queue is full
                 frame_queue.task_done()
+                print(f"Total processing time: {time.time() - start_time:.2f} seconds")
+                print("--- Prediction cycle complete ---\n")
+                
         except Exception as e:
             print(f"Error in prediction thread: {str(e)}")
         
