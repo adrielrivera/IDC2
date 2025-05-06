@@ -5,6 +5,10 @@ import os
 import threading
 import queue
 import numpy as np
+from dotenv import load_dotenv
+
+load_dotenv()
+api_key = os.getenv('ROBOFLOW_API')
 
 # Queue for communication between threads
 prediction_queue = queue.Queue()
@@ -53,7 +57,7 @@ cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
 
 # Initialize Roboflow model
 print("Initializing Roboflow model...")
-rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")
+rf = Roboflow(api_key=api_key)
 project = rf.workspace().project("idc2")
 model = project.version("13").model
 print("Model initialized!")
@@ -63,7 +67,7 @@ print("Setting up camera...")
 cap = cv2.VideoCapture(0)  # USB camera index 0
 
 # Set resolution (lower for better performance)
-resW, resH = 640, 480
+resW, resH = 1920, 1080
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
 
