@@ -42,7 +42,7 @@ cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
 print("Initializing Roboflow model...")
 rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")
 project = rf.workspace().project("idc2")
-model = project.version("10").model
+model = project.version("13").model
 print("Model initialized!")
 
 # Initialize camera
