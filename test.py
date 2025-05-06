@@ -4,6 +4,7 @@ from roboflow import Roboflow
 import os
 import threading
 import queue
+import numpy as np
 
 # Queue for communication between threads
 prediction_queue = queue.Queue()
@@ -59,24 +60,27 @@ print("Model initialized!")
 
 # Initialize camera
 print("Setting up camera...")
-cam = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(0)  # USB camera index 0
 
 # Set resolution (lower for better performance)
-cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+resW, resH = 640, 480
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
 
 # Set buffer size to minimum
-cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 print("Camera ready!")
 
 # Temp file for saving frames
 temp_file = "temp_frame.jpg"
 
-# For FPS calculation
-prev_time = time.time()
-frame_count = 0
-fps_update_interval = 10  # Update FPS every 10 frames
-fps = 0
+# Initialize control and status variables
+avg_frame_rate = 0
+frame_rate_buffer = []
+fps_avg_len = 30
+
+# Set bounding box colors (using the Tableau 10 color scheme)
+bbox_colors = [(0, 255, 0)]  # Using green for now, can expand with more colors
 
 # Thread control
 stop_threads = False
@@ -88,26 +92,28 @@ prediction_thread.daemon = True
 prediction_thread.start()
 
 print("Starting detection loop...")
-print("Press 'q' to quit")
+print("Press 'q' to quit, 's' to pause, 'p' to save current frame")
 
 try:
     while True:
+        t_start = time.perf_counter()
+
         # Capture frame
-        ret, image = cam.read()
-        
-        if ret:
-            # Add frame to processing queue every 10th frame
-            if frame_count % 10 == 0 and frame_queue.empty():
-                # Put a copy of the frame in the queue
-                frame_queue.put(image.copy())
+        ret, frame = cap.read()
+        if not ret:
+            print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
+            break
+
+        # Run prediction on frame
+        try:
+            predictions = model.predict(frame, confidence=40, overlap=30).json()
             
-            # Get predictions from queue if available
-            if not prediction_queue.empty():
-                latest_predictions = prediction_queue.get()
-            
-            # Draw predictions on frame
-            if 'predictions' in latest_predictions:
-                for prediction in latest_predictions['predictions']:
+            # Initialize variable for basic object counting
+            object_count = 0
+
+            # Draw predictions
+            if 'predictions' in predictions:
+                for prediction in predictions['predictions']:
                     # Get coordinates
                     x1 = prediction['x'] - prediction['width'] / 2
                     y1 = prediction['y'] - prediction['height'] / 2
@@ -118,33 +124,52 @@ try:
                     x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
                     
                     # Draw bounding box
-                    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    color = bbox_colors[0]  # Using first color
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     
                     # Add label with confidence
-                    label = f"{prediction['class']} {prediction['confidence']:.2f}"
-                    cv2.putText(image, label, (x1, y1-10), 
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    label = f"{prediction['class']}: {int(prediction['confidence']*100)}%"
+                    labelSize, baseLine = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                    label_ymin = max(y1, labelSize[1] + 10)
+                    cv2.rectangle(frame, (x1, label_ymin-labelSize[1]-10), 
+                                (x1+labelSize[0], label_ymin+baseLine-10), color, cv2.FILLED)
+                    cv2.putText(frame, label, (x1, label_ymin-7), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                    
+                    object_count += 1
+
+            # Calculate FPS
+            t_stop = time.perf_counter()
+            frame_rate_calc = float(1/(t_stop - t_start))
+
+            # Update FPS buffer
+            if len(frame_rate_buffer) >= fps_avg_len:
+                frame_rate_buffer.pop(0)
+            frame_rate_buffer.append(frame_rate_calc)
             
-            # Calculate and display FPS
-            frame_count += 1
-            
-            if frame_count % fps_update_interval == 0:
-                current_time = time.time()
-                # Calculate FPS over multiple frames for stability
-                fps = fps_update_interval / (current_time - prev_time)
-                prev_time = current_time
-            
-            # Display FPS and frame count
-            cv2.putText(image, f"FPS: {int(fps)}", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            
-            # Display the resulting frame
-            cv2.imshow("Camera Feed", image)
-            
-            # Break loop with 'q' key - use a shorter wait time for better responsiveness
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
+            # Calculate average FPS
+            avg_frame_rate = np.mean(frame_rate_buffer)
+
+            # Display FPS and object count
+            cv2.putText(frame, f'FPS: {avg_frame_rate:0.2f}', (10, 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, f'Objects: {object_count}', (10, 40),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+            # Display the frame
+            cv2.imshow('Detection Results', frame)
+
+        except Exception as e:
+            print(f"Error in prediction: {str(e)}")
+
+        # Handle key presses
+        key = cv2.waitKey(5) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('s'):  # Pause
+            cv2.waitKey()
+        elif key == ord('p'):  # Save frame
+            cv2.imwrite('capture.png', frame)
 
 except KeyboardInterrupt:
     print("\nStopping detection...")
@@ -157,8 +182,8 @@ if prediction_thread.is_alive():
     prediction_thread.join(timeout=1.0)
 
 # Clean up
-print("Cleaning up...")
-cam.release()
+print(f'Average pipeline FPS: {avg_frame_rate:.2f}')
+cap.release()
 cv2.destroyAllWindows()
 if os.path.exists(temp_file):
     os.remove(temp_file)
