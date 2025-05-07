@@ -100,22 +100,32 @@ print("Press 'q' to quit, 's' to pause, 'p' to save current frame")
 
 try:
     while True:
-        t_start = time.perf_counter()
+        loop_start = time.perf_counter()
 
         # Capture frame
+        capture_start = time.perf_counter()
         ret, frame = cap.read()
         if not ret:
             print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
             break
+        capture_time = time.perf_counter() - capture_start
 
         # Run prediction on frame
         try:
+            predict_start = time.perf_counter()
             predictions = model.predict(frame, confidence=40, overlap=30).json()
+            predict_time = time.perf_counter() - predict_start
+            
+            # Print timing information
+            print(f"\nTiming:")
+            print(f"Frame capture: {capture_time*1000:.1f}ms")
+            print(f"Prediction: {predict_time*1000:.1f}ms")
             
             # Initialize variable for basic object counting
             object_count = 0
 
             # Draw predictions
+            draw_start = time.perf_counter()
             if 'predictions' in predictions:
                 for prediction in predictions['predictions']:
                     # Get coordinates
@@ -141,10 +151,15 @@ try:
                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
                     
                     object_count += 1
+            draw_time = time.perf_counter() - draw_start
+            print(f"Drawing: {draw_time*1000:.1f}ms")
 
-            # Calculate FPS
-            t_stop = time.perf_counter()
-            frame_rate_calc = float(1/(t_stop - t_start))
+            # Calculate total time for this frame
+            total_time = time.perf_counter() - loop_start
+            print(f"Total frame time: {total_time*1000:.1f}ms")
+
+            # Update FPS calculations
+            frame_rate_calc = 1/total_time if total_time > 0 else 0
 
             # Update FPS buffer
             if len(frame_rate_buffer) >= fps_avg_len:
