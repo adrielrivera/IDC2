@@ -24,7 +24,7 @@ cap = cv2.VideoCapture(0)  # USB camera index 0
 # Set resolution (lower for better performance)
 resW, resH = 320, 240  # Reduced for better performance
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)  # Fixed property name
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
 
 # Create window
 cv2.namedWindow("Detection Results", cv2.WINDOW_NORMAL)
@@ -41,8 +41,16 @@ avg_detection_fps = 0  # Initialize detection FPS
 # Set bounding box colors
 bbox_colors = [(0, 255, 0)]  # Using green for now
 
-# Local inference server endpoint
-INFERENCE_SERVER_URL = "http://localhost:9001/idc2/13"  # Adjust model name and version as needed
+# Roboflow API endpoint
+API_URL = f"https://detect.roboflow.com/idc2/13"
+HEADERS = {
+    "Content-Type": "application/x-www-form-urlencoded",
+}
+PARAMS = {
+    "api_key": api_key,
+    "confidence": 40,
+    "overlap": 30,
+}
 
 print("Starting detection loop...")
 print("Press 'q' to quit, 's' to pause, 'p' to save current frame")
@@ -83,15 +91,18 @@ try:
                 # Encode image to base64
                 predict_start = time.perf_counter()
                 _, img_encoded = cv2.imencode('.jpg', frame)
+                image_base64 = img_encoded.tobytes()
                 
-                # Send to local inference server
+                # Send to Roboflow API
                 response = requests.post(
-                    INFERENCE_SERVER_URL,
-                    files={"image": ("image.jpg", img_encoded.tobytes(), "image/jpeg")},
+                    API_URL,
+                    params=PARAMS,
+                    headers=HEADERS,
+                    data=image_base64
                 )
                 predictions = response.json()
                 predict_time = time.perf_counter() - predict_start
-                print(f"Local prediction completed: {predict_time*1000:.1f}ms")
+                print(f"Prediction completed: {predict_time*1000:.1f}ms")
                 latest_predictions = predictions
             
             # Initialize variable for basic object counting
