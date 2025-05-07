@@ -83,11 +83,13 @@ print("Camera ready!")
 temp_file = "temp_frame.jpg"
 
 # Initialize control and status variables
-avg_frame_rate = 0
-frame_rate_buffer = []
+display_fps_buffer = []  # For display frame rate
+detection_fps_buffer = []  # For detection frame rate
 fps_avg_len = 30
 frame_count = 0  # Add frame counter for skipping
 latest_predictions = []  # Store latest predictions to show on skipped frames
+last_detection_time = time.perf_counter()  # Track time between detections
+avg_detection_fps = 0  # Initialize detection FPS
 
 # Set bounding box colors (using the Tableau 10 color scheme)
 bbox_colors = [(0, 255, 0)]  # Using green for now, can expand with more colors
@@ -109,12 +111,10 @@ try:
         loop_start = time.perf_counter()
 
         # Capture frame
-        capture_start = time.perf_counter()
         ret, frame = cap.read()
         if not ret:
             print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
             break
-        capture_time = time.perf_counter() - capture_start
         
         # Only run prediction every 3rd frame
         should_predict = frame_count % 3 == 0
@@ -123,16 +123,28 @@ try:
         # Run prediction on frame
         try:
             if should_predict:
+                # Calculate detection FPS
+                current_time = time.perf_counter()
+                detection_interval = current_time - last_detection_time
+                detection_fps = 1.0 / detection_interval if detection_interval > 0 else 0
+                last_detection_time = current_time
+                
+                # Update detection FPS buffer
+                if len(detection_fps_buffer) >= fps_avg_len:
+                    detection_fps_buffer.pop(0)
+                detection_fps_buffer.append(detection_fps)
+                avg_detection_fps = np.mean(detection_fps_buffer) if detection_fps_buffer else 0
+                
                 print("\n" + "="*50)
                 print("TIMING MEASUREMENTS:")
-                print(f"Frame capture: {capture_time*1000:.1f}ms")
-                print("Starting prediction...")
+                print(f"Starting prediction... (Detection FPS: {avg_detection_fps:.1f})")
+                
                 predict_start = time.perf_counter()
                 predictions = model.predict(frame, confidence=40, overlap=30).json()
                 predict_time = time.perf_counter() - predict_start
                 print(f"Prediction completed: {predict_time*1000:.1f}ms")
-                latest_predictions = predictions  # Store for use in skipped frames
-            
+                latest_predictions = predictions
+
             # Initialize variable for basic object counting
             object_count = 0
 
@@ -167,28 +179,28 @@ try:
 
             if should_predict:
                 print(f"Drawing time: {draw_time*1000:.1f}ms")
+                # Calculate display FPS
+                display_time = time.perf_counter() - loop_start
+                display_fps = 1.0 / display_time if display_time > 0 else 0
+                
+                # Update display FPS buffer
+                if len(display_fps_buffer) >= fps_avg_len:
+                    display_fps_buffer.pop(0)
+                display_fps_buffer.append(display_fps)
+                avg_display_fps = np.mean(display_fps_buffer)
+
                 # Calculate total time for this frame
                 total_time = time.perf_counter() - loop_start
                 print(f"TOTAL FRAME TIME: {total_time*1000:.1f}ms")
                 print(f"Current FPS: {1/total_time:.2f}")
                 print("="*50 + "\n")
 
-            # Update FPS calculations
-            total_time = time.perf_counter() - loop_start
-            frame_rate_calc = 1/total_time if total_time > 0 else 0
-
-            # Update FPS buffer
-            if len(frame_rate_buffer) >= fps_avg_len:
-                frame_rate_buffer.pop(0)
-            frame_rate_buffer.append(frame_rate_calc)
-            
-            # Calculate average FPS
-            avg_frame_rate = np.mean(frame_rate_buffer)
-
             # Display FPS and object count
-            cv2.putText(frame, f'FPS: {avg_frame_rate:0.2f}', (10, 20), 
+            cv2.putText(frame, f'Display FPS: {avg_display_fps:.1f}', (10, 20), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            cv2.putText(frame, f'Objects: {object_count}', (10, 40),
+            cv2.putText(frame, f'Detection FPS: {avg_detection_fps:.1f}', (10, 50), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, f'Objects: {object_count}', (10, 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             # Display the frame
@@ -217,7 +229,7 @@ if prediction_thread.is_alive():
     prediction_thread.join(timeout=1.0)
 
 # Clean up
-print(f'Average pipeline FPS: {avg_frame_rate:.2f}')
+print(f'Average pipeline FPS: {avg_display_fps:.2f}')
 cap.release()
 cv2.destroyAllWindows()
 if os.path.exists(temp_file):
