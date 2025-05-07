@@ -71,7 +71,7 @@ print("Setting up camera...")
 cap = cv2.VideoCapture(0)  # USB camera index 0
 
 # Set resolution (lower for better performance)
-resW, resH = 640, 480  # Changed from 1920x1080 to 640x480
+resW, resH = 320, 240  # Reduced from 640x480 for better performance
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
 
@@ -116,8 +116,8 @@ try:
             print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
             break
         
-        # Only run prediction every 3rd frame
-        should_predict = frame_count % 3 == 0
+        # Only run prediction every 5th frame (changed from 3rd)
+        should_predict = frame_count % 5 == 0
         frame_count += 1
 
         # Run prediction on frame
