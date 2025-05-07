@@ -7,6 +7,10 @@ import queue
 import numpy as np
 from dotenv import load_dotenv
 
+# Set the Qt backend for OpenCV on Raspberry Pi
+os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Use X11/xcb backend for Raspberry Pi
+os.environ['DISPLAY'] = ':0'  # Ensure display is set
+
 load_dotenv()
 api_key = os.getenv('ROBOFLOW_API')
 
