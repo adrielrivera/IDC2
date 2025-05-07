@@ -109,17 +109,17 @@ try:
             print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
             break
         capture_time = time.perf_counter() - capture_start
+        print("\n" + "="*50)
+        print("TIMING MEASUREMENTS:")
+        print(f"Frame capture: {capture_time*1000:.1f}ms")
 
         # Run prediction on frame
         try:
+            print("Starting prediction...")
             predict_start = time.perf_counter()
             predictions = model.predict(frame, confidence=40, overlap=30).json()
             predict_time = time.perf_counter() - predict_start
-            
-            # Print timing information
-            print(f"\nTiming:")
-            print(f"Frame capture: {capture_time*1000:.1f}ms")
-            print(f"Prediction: {predict_time*1000:.1f}ms")
+            print(f"Prediction completed: {predict_time*1000:.1f}ms")
             
             # Initialize variable for basic object counting
             object_count = 0
@@ -152,11 +152,13 @@ try:
                     
                     object_count += 1
             draw_time = time.perf_counter() - draw_start
-            print(f"Drawing: {draw_time*1000:.1f}ms")
+            print(f"Drawing time: {draw_time*1000:.1f}ms")
 
             # Calculate total time for this frame
             total_time = time.perf_counter() - loop_start
-            print(f"Total frame time: {total_time*1000:.1f}ms")
+            print(f"TOTAL FRAME TIME: {total_time*1000:.1f}ms")
+            print(f"Current FPS: {1/total_time:.2f}")
+            print("="*50 + "\n")
 
             # Update FPS calculations
             frame_rate_calc = 1/total_time if total_time > 0 else 0
