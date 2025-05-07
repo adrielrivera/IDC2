@@ -67,7 +67,7 @@ print("Setting up camera...")
 cap = cv2.VideoCapture(0)  # USB camera index 0
 
 # Set resolution (lower for better performance)
-resW, resH = 1920, 1080
+resW, resH = 640, 480  # Changed from 1920x1080 to 640x480
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
 
@@ -82,6 +82,8 @@ temp_file = "temp_frame.jpg"
 avg_frame_rate = 0
 frame_rate_buffer = []
 fps_avg_len = 30
+frame_count = 0  # Add frame counter for skipping
+latest_predictions = []  # Store latest predictions to show on skipped frames
 
 # Set bounding box colors (using the Tableau 10 color scheme)
 bbox_colors = [(0, 255, 0)]  # Using green for now, can expand with more colors
@@ -109,25 +111,31 @@ try:
             print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
             break
         capture_time = time.perf_counter() - capture_start
-        print("\n" + "="*50)
-        print("TIMING MEASUREMENTS:")
-        print(f"Frame capture: {capture_time*1000:.1f}ms")
+        
+        # Only run prediction every 3rd frame
+        should_predict = frame_count % 3 == 0
+        frame_count += 1
 
         # Run prediction on frame
         try:
-            print("Starting prediction...")
-            predict_start = time.perf_counter()
-            predictions = model.predict(frame, confidence=40, overlap=30).json()
-            predict_time = time.perf_counter() - predict_start
-            print(f"Prediction completed: {predict_time*1000:.1f}ms")
+            if should_predict:
+                print("\n" + "="*50)
+                print("TIMING MEASUREMENTS:")
+                print(f"Frame capture: {capture_time*1000:.1f}ms")
+                print("Starting prediction...")
+                predict_start = time.perf_counter()
+                predictions = model.predict(frame, confidence=40, overlap=30).json()
+                predict_time = time.perf_counter() - predict_start
+                print(f"Prediction completed: {predict_time*1000:.1f}ms")
+                latest_predictions = predictions  # Store for use in skipped frames
             
             # Initialize variable for basic object counting
             object_count = 0
 
             # Draw predictions
             draw_start = time.perf_counter()
-            if 'predictions' in predictions:
-                for prediction in predictions['predictions']:
+            if 'predictions' in latest_predictions:
+                for prediction in latest_predictions['predictions']:
                     # Get coordinates
                     x1 = prediction['x'] - prediction['width'] / 2
                     y1 = prediction['y'] - prediction['height'] / 2
@@ -152,15 +160,17 @@ try:
                     
                     object_count += 1
             draw_time = time.perf_counter() - draw_start
-            print(f"Drawing time: {draw_time*1000:.1f}ms")
 
-            # Calculate total time for this frame
-            total_time = time.perf_counter() - loop_start
-            print(f"TOTAL FRAME TIME: {total_time*1000:.1f}ms")
-            print(f"Current FPS: {1/total_time:.2f}")
-            print("="*50 + "\n")
+            if should_predict:
+                print(f"Drawing time: {draw_time*1000:.1f}ms")
+                # Calculate total time for this frame
+                total_time = time.perf_counter() - loop_start
+                print(f"TOTAL FRAME TIME: {total_time*1000:.1f}ms")
+                print(f"Current FPS: {1/total_time:.2f}")
+                print("="*50 + "\n")
 
             # Update FPS calculations
+            total_time = time.perf_counter() - loop_start
             frame_rate_calc = 1/total_time if total_time > 0 else 0
 
             # Update FPS buffer
