@@ -24,7 +24,7 @@ cap = cv2.VideoCapture(0)  # USB camera index 0
 # Set resolution (lower for better performance)
 resW, resH = 320, 240  # Reduced for better performance
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
-cap.set(cv2.CAP_PROP_HEIGHT, resH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)  # Fixed property name
 
 # Create window
 cv2.namedWindow("Detection Results", cv2.WINDOW_NORMAL)
