@@ -1,4 +1,5 @@
 import cv2
+import os
 import time
 from roboflow import Roboflow
 import threading
@@ -7,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 
 load_dotenv()
+api_key = os.getenv("ROBOFLOW_API") 
 
 # Explicitly start window thread
 cv2.startWindowThread()
@@ -16,7 +18,7 @@ cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
 
 # Initialize Roboflow model
 print("Initializing Roboflow model...")
-rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")
+rf = Roboflow(api_key=api_key)
 project = rf.workspace().project("idc2")
 model = project.version("13").model
 print("Model initialized!")
