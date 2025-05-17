@@ -1,0 +1,34 @@
+String incomingMessage = ""; // String to store incoming message
+
+void setup() {
+  // Initialize serial communication at 9600 bits per second.
+  // Make sure this baud rate matches the setting in your Python script
+  // or Serial Monitor.
+  Serial.begin(9600);
+  
+  Serial.println("Arduino Serial Echo Test Ready.");
+  Serial.println("Send any message (ending with newline) to test.");
+  Serial.println("--------------------------------------------");
+}
+
+void loop() {
+  // Check if there's any data available to read from the serial port
+  if (Serial.available() > 0) {
+    // Read the incoming string until a newline character ('\n') is received
+    incomingMessage = Serial.readStringUntil('\n');
+    
+    // Remove any leading/trailing whitespace (like carriage returns if sent from some terminals)
+    incomingMessage.trim(); 
+
+    if (incomingMessage.length() > 0) {
+      // Print the received message to the Serial Monitor (for Arduino-side debugging)
+      Serial.print("Received on Arduino: '");
+      Serial.print(incomingMessage);
+      Serial.println("'");
+
+      // Echo the received message back to the sender (Python script or Serial Monitor)
+      Serial.print("Arduino Echo: ");
+      Serial.println(incomingMessage);
+    }
+  }
+}
