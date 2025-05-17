@@ -12,7 +12,7 @@ load_dotenv()
 api_key = os.getenv("ROBOFLOW_API") 
 
 # --- Serial Communication Setup ---
-SERIAL_PORT = "YOUR_ARDUINO_PORT"  # <-- !!! REPLACE WITH YOUR ACTUAL PORT !!!
+SERIAL_PORT = "/dev/ttyUSB0"  # <-- !!! REPLACE WITH YOUR ACTUAL PORT !!!
 BAUD_RATE = 9600
 ser = None
 try:
@@ -88,6 +88,17 @@ def run_detection(frame):
             ser.write(command_to_send.encode('utf-8'))
             print(f"Sent to Arduino: {command_to_send.strip()}")
             time.sleep(0.05) # Small delay between commands if sending multiple
+
+            # ---- ADDED: Read echo from Arduino ----
+            # Wait a brief moment for Arduino to process and reply
+            time.sleep(0.1) # Adjust if needed
+            if ser.in_waiting > 0: # Check if there's data to read
+                try:
+                    echo_response = ser.readline().decode('utf-8').strip()
+                    print(f"Received from Arduino: {echo_response}")
+                except Exception as e:
+                    print(f"Error reading from Arduino: {e}")
+            # ---- END OF ADDED CODE ----
 
     print(f"Detection complete - Objects found: {len(predictions.get('predictions', []))}")
 
