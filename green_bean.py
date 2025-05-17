@@ -6,23 +6,9 @@ import threading
 import numpy as np
 from dotenv import load_dotenv
 from datetime import datetime
-import serial
 
 load_dotenv()
 api_key = os.getenv("ROBOFLOW_API") 
-
-# --- Serial Communication Setup ---
-SERIAL_PORT = "YOUR_ARDUINO_PORT"  # <-- !!! REPLACE WITH YOUR ACTUAL PORT !!!
-BAUD_RATE = 9600
-ser = None
-try:
-    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-    print(f"Successfully connected to Arduino on port {SERIAL_PORT}")
-except serial.SerialException as e:
-    print(f"Error: Could not open serial port {SERIAL_PORT}: {e}")
-    print("Please check the port name and ensure Arduino is connected.")
-    ser = None # Ensure ser is None if connection failed
-# --------------------------------
 
 # Explicitly start window thread
 cv2.startWindowThread()
@@ -33,8 +19,8 @@ cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
 # Initialize Roboflow model
 print("Initializing Roboflow model...")
 rf = Roboflow(api_key=api_key)
-project = rf.workspace().project("idc2")
-model = project.version("13").model
+project = rf.workspace().project("green-bean")
+model = project.version("1").model
 print("Model initialized!")
 
 # Initialize camera
@@ -78,17 +64,6 @@ def run_detection(frame):
     with detection_lock:
         detection_result = (predictions, resized_frame)
     
-    # Send detected classes to Arduino if serial is available
-    if ser and ser.is_open and predictions.get('predictions'):
-        detected_classes = set() # Use a set to send each class name once per frame
-        for p in predictions['predictions']:
-            detected_classes.add(p['class'])
-        for cls_name in detected_classes:
-            command_to_send = f"DETECTED_{cls_name.upper()}\n"
-            ser.write(command_to_send.encode('utf-8'))
-            print(f"Sent to Arduino: {command_to_send.strip()}")
-            time.sleep(0.05) # Small delay between commands if sending multiple
-
     print(f"Detection complete - Objects found: {len(predictions.get('predictions', []))}")
 
 try:
@@ -122,11 +97,11 @@ try:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
                 # Display detection results
-                cv2.imshow('Detection Results', detection_frame)
+                cv2.imshow('Green Bean Detection', detection_frame)
 
                 # Save the frame
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                save_name = f'detected_frame_{timestamp}.png'
+                save_name = f'greenbean_detected_{timestamp}.png'
                 cv2.imwrite(save_name, detection_frame)
                 print(f"Frame saved as: {save_name}")
 
@@ -149,9 +124,4 @@ except Exception as e:
 # Clean up
 cap.release()
 cv2.destroyAllWindows()
-# --- Close Serial Port --- #
-if ser and ser.is_open:
-    ser.close()
-    print("Serial port closed.")
-# -------------------------
-print("Done!")
+print("Done!") 
