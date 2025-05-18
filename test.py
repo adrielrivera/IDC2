@@ -12,7 +12,7 @@ load_dotenv()
 api_key = os.getenv("ROBOFLOW_API") 
 
 # --- Serial Communication Setup ---
-SERIAL_PORT = "/dev/ttyUSB0"  # <-- !!! REPLACE WITH YOUR ACTUAL PORT !!!
+SERIAL_PORT = "/dev/ttyACM0"  # <-- !!! REPLACE WITH YOUR ACTUAL PORT !!!
 BAUD_RATE = 9600
 ser = None
 try:
