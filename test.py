@@ -30,7 +30,7 @@ cv2.startWindowThread()
 # Create window first before capturing
 cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
 
-# Initialize Roboflow model
+ # Initialize Roboflow model
 print("Initializing Roboflow model...")
 rf = Roboflow(api_key=api_key)
 project = rf.workspace().project("idc2")
