@@ -1,196 +1,47 @@
-/*
- * Bare Arduino Test Code for Food Detection System
- * 
- * This code tests serial communication with Raspberry Pi
- * and parses detection results without requiring any hardware
- * connections other than the USB cable.
- * 
- * Instructions:
- * 1. Upload this code to your Arduino
- * 2. Open Serial Monitor (set to 9600 baud)
- * 3. Run the test.py on Raspberry Pi
- * 4. Type 'detect' in Arduino Serial Monitor to trigger detection
- * 5. Watch detection results appear in Serial Monitor
- */
-
-#define MAX_OBJECTS 5
-
-struct DetectedObject {
-  float x;
-  float y;
-  String className;
-  float confidence;
-};
-
-DetectedObject detectedObjects[MAX_OBJECTS];
-int objectCount = 0;
-bool detectionInProgress = false;
-unsigned long detectionStartTime = 0;
-unsigned long detectionTimeout = 10000; // 10 second timeout
-
-// Target food for testing
-String targetFood = ""; // Will be set through serial command
+// Simplest Arduino detection test
 
 void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);  // Built-in LED
   Serial.begin(9600);
-  delay(2000); // Wait for serial connection to establish
   
-  printMenu();
+  // Wait for serial connection
+  delay(2000);
+  
+  // Flash LED to show we're starting
+  blinkLED(3);
+  
+  // Send detection request
+  Serial.println("DETECT");
+  digitalWrite(LED_BUILTIN, HIGH);  // LED ON = waiting for response
 }
 
 void loop() {
-  // Process any serial commands
+  // Check for any response
   if (Serial.available() > 0) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
+    String response = Serial.readStringUntil('\n');
     
-    if (command == "detect") {
-      requestDetection();
-    }
-    else if (command == "menu") {
-      printMenu();
-    }
-    else if (command.startsWith("food:")) {
-      targetFood = command.substring(5);
-      Serial.print("Target food set to: ");
-      Serial.println(targetFood);
-    }
-    else if (command == "results") {
-      printDetectionResults();
-    }
-    else {
-      Serial.print("Unknown command: ");
-      Serial.println(command);
-      printMenu();
-    }
-  }
-  
-  // Check for detection results if a detection is in progress
-  if (detectionInProgress) {
-    checkDetectionResults();
-    
-    // Check for timeout
-    if (millis() - detectionStartTime > detectionTimeout) {
-      Serial.println("Detection timed out!");
-      detectionInProgress = false;
-    }
-  }
-}
-
-void printMenu() {
-  Serial.println("\n----- Food Detection Test -----");
-  Serial.println("Available commands:");
-  Serial.println("  detect - Request detection from Raspberry Pi");
-  Serial.println("  food:sandwich - Set target food (sandwich, hotdog, burger)");
-  Serial.println("  results - Show last detection results");
-  Serial.println("  menu - Show this menu");
-  Serial.println("------------------------------");
-}
-
-void requestDetection() {
-  Serial.println("DETECT");
-  Serial.println("Detection request sent to Raspberry Pi...");
-  detectionInProgress = true;
-  detectionStartTime = millis();
-}
-
-void checkDetectionResults() {
-  while (Serial.available() > 0) {
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-    
-    // Echo all received data to Serial Monitor
-    Serial.print("← Received: ");
-    Serial.println(line);
-    
-    if (line == "START") {
-      Serial.println("Detection results incoming...");
-      objectCount = 0;
-    }
-    else if (line == "END") {
-      detectionInProgress = false;
-      Serial.println("Detection complete!");
-      
-      // Process the results
-      analyzeResults();
-    }
-    else if (line.startsWith("COUNT:")) {
-      objectCount = line.substring(6).toInt();
-      Serial.print("Found ");
-      Serial.print(objectCount);
-      Serial.println(" objects");
-    }
-    else if (line.startsWith("ID:") && objectCount < MAX_OBJECTS) {
-      parseObjectData(line);
-    }
-  }
-}
-
-void parseObjectData(String data) {
-  // Format: "ID:0,X:0.50,Y:0.25,CLASS:sandwich,CONF:0.95"
-  int idEnd = data.indexOf(',');
-  int xStart = data.indexOf("X:") + 2;
-  int xEnd = data.indexOf(',', xStart);
-  int yStart = data.indexOf("Y:") + 2;
-  int yEnd = data.indexOf(',', yStart);
-  int classStart = data.indexOf("CLASS:") + 6;
-  int classEnd = data.indexOf(',', classStart);
-  int confStart = data.indexOf("CONF:") + 5;
-  
-  int index = data.substring(3, idEnd).toInt();
-  
-  if (index < MAX_OBJECTS) {
-    detectedObjects[index].x = data.substring(xStart, xEnd).toFloat();
-    detectedObjects[index].y = data.substring(yStart, yEnd).toFloat();
-    detectedObjects[index].className = data.substring(classStart, classEnd);
-    detectedObjects[index].confidence = data.substring(confStart).toFloat();
-  }
-}
-
-void analyzeResults() {
-  Serial.println("\n===== Detection Results =====");
-  
-  for (int i = 0; i < objectCount; i++) {
-    Serial.print("Object ");
-    Serial.print(i);
-    Serial.print(": ");
-    Serial.print(detectedObjects[i].className);
-    Serial.print(" (confidence: ");
-    Serial.print(detectedObjects[i].confidence * 100);
-    Serial.print("%) at position (");
-    Serial.print(detectedObjects[i].x);
-    Serial.print(", ");
-    Serial.print(detectedObjects[i].y);
-    Serial.println(")");
-  }
-  
-  // Check if target food was found
-  if (targetFood != "") {
-    bool targetFound = false;
-    for (int i = 0; i < objectCount; i++) {
-      if (detectedObjects[i].className == targetFood) {
-        targetFound = true;
-        Serial.print("✅ Target food '");
-        Serial.print(targetFood);
-        Serial.println("' was found!");
-        break;
-      }
+    // When we receive START, we know detection is beginning
+    if (response == "START") {
+      digitalWrite(LED_BUILTIN, LOW);  // LED OFF briefly
+      delay(100);
+      digitalWrite(LED_BUILTIN, HIGH); // LED ON again
     }
     
-    if (!targetFound) {
-      Serial.print("❌ Target food '");
-      Serial.print(targetFood);
-      Serial.println("' was NOT found!");
+    // When we receive END, detection is complete
+    if (response == "END") {
+      digitalWrite(LED_BUILTIN, LOW);  // LED OFF = detection complete
+      // Success pattern
+      delay(500);
+      blinkLED(5); // Blink 5 times quickly to indicate success
     }
   }
-  
-  Serial.println("=============================");
 }
 
-void printDetectionResults() {
-  if (objectCount > 0) {
-    analyzeResults();
-  } else {
-    Serial.println("No detection results available yet.");
+void blinkLED(int times) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(100);
   }
 }
