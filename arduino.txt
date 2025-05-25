@@ -1,34 +1,518 @@
-String incomingMessage = ""; // String to store incoming message
+#include <Servo.h>
+#include "CytronMotorDriver.h"
+
+// Motor Pin Declaration
+CytronMD motor1(PWM_PWM, 5, 6);   // PWM 1A = Pin 5, PWM 1B = Pin 6.
+CytronMD motor2(PWM_PWM, 3, 11);  // PWM 2A = Pin 3, PWM 2B = Pin 11.
+
+// Line IR Declaration
+const int Left_IRSensor = A0;      // Left IR sensor
+const int Right_IRSensor = A1;     // Right IR sensor
+const int Extra_IRSensor = A2;     // Extra IR sensor
+const int rightright_IRSensor = A3; // Rightmost IR sensor
+
+// Declaring Servos
+Servo cameraServo; // For camera positioning
+Servo gateServo;   // For collecting items
+
+// Constants for food detection
+#define CAMERA_LEFT 30
+#define CAMERA_CENTER 90
+#define CAMERA_RIGHT 150
+#define GATE_OPEN 180
+#define GATE_CLOSED 90
+
+// Task management
+String targetFood = ""; // Will store "sandwich", "hotdog", or "burger"
+enum TaskType {MILK_TASK, FOOD_TASK, WATER_TASK};
+TaskType currentTask = MILK_TASK;
+bool taskCompleted[3] = {false, false, false};
+
+// Detection variables
+#define MAX_OBJECTS 5
+struct DetectedObject {
+  float x;
+  float y;
+  String className;
+  float confidence;
+};
+DetectedObject detectedObjects[MAX_OBJECTS];
+int objectCount = 0;
+bool detectionInProgress = false;
+unsigned long detectionStartTime = 0;
+
+// Motor functions
+void moveforward(int chosen_forward) {
+  motor1.setSpeed(chosen_forward);
+  motor2.setSpeed(chosen_forward);
+}
+
+void moveback(int chosen_back) {
+  motor1.setSpeed(-chosen_back);
+  motor2.setSpeed(-chosen_back);
+}
+
+void turning(int left, int right) {
+  motor1.setSpeed(left);
+  motor2.setSpeed(right);
+}
+
+void nomove() {
+  motor1.setSpeed(0);
+  motor2.setSpeed(0);
+}
+
+// Global Variable for pid
+double error = 0;
+double lasterror = 0;
+double moving = 0;
+double integral = 0;
+
+// Constants for pid
+double kp = 0.7; 
+double ki = 0;
+double kd = 0;
+
+// PID Code
+void PID() {
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+
+  // Map values, white first, black second
+  left_result = map(left_result, 68, 650, 0, 100);
+  right_result = map(right_result, 79, 824, 0, 100);
+
+  // Tracking code
+  error = left_result - right_result;
+  double derivative = error - lasterror;
+  moving = kp * error + ki * integral + kd * derivative;
+  turning(150 - moving, 150 + moving);
+  lasterror = error;
+  delay(1);
+}
+
+// Junction detection (for milk and normal junction)
+void junction() {
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+
+    if (left_result > 300 && right_result > 300) {
+      nomove();
+      break;
+    } else {
+      PID();
+    }
+  }
+}
+
+// Middle Junction Code (to collect the food)
+void middle_junction() {
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+  int extra_result = analogRead(Extra_IRSensor);
+
+  if (extra_result > 300) {
+    nomove();
+  } else {
+    PID();
+  }
+}
+
+// Junction to collect the water
+void water_junction() {
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+  int extra_result = analogRead(Extra_IRSensor);
+  int rightright_result = analogRead(rightright_IRSensor);
+
+  if (rightright_result > 300) {
+    nomove();
+  } else {
+    PID();
+  }
+}
+
+// Return to tray function
+void returnToTray() {
+  // Turn 180 degrees
+  turning(-150, 150);
+  delay(1000); // Adjust delay as needed for 180 degree turn
+  
+  // Follow line until junction (tray)
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+    
+    if (left_result > 300 && right_result > 300) {
+      nomove();
+      break;
+    } else {
+      PID();
+    }
+  }
+}
+
+// Function to request object detection from Raspberry Pi
+bool requestDetection() {
+  Serial.println("DETECT");
+  detectionInProgress = true;
+  detectionStartTime = millis();
+  return true;
+}
+
+// Check for detection results
+void checkDetectionResults() {
+  if (detectionInProgress) {
+    // Check for timeout (10 seconds)
+    if (millis() - detectionStartTime > 10000) {
+      Serial.println("Detection timeout");
+      detectionInProgress = false;
+      return;
+    }
+    
+    // Process incoming data
+    if (Serial.available() > 0) {
+      String line = Serial.readStringUntil('\n');
+      
+      if (line == "START") {
+        objectCount = 0;
+      }
+      else if (line == "END") {
+        detectionInProgress = false;
+        // Now process results
+        processDetectionResults();
+      }
+      else if (line.startsWith("COUNT:")) {
+        objectCount = line.substring(6).toInt();
+      }
+      else if (line.startsWith("ID:") && objectCount < MAX_OBJECTS) {
+        parseObjectData(line);
+      }
+    }
+  }
+}
+
+// Parse detection data
+void parseObjectData(String data) {
+  // Format: "ID:0,X:0.50,Y:0.25,CLASS:sandwich,CONF:0.95"
+  int idEnd = data.indexOf(',');
+  int xStart = data.indexOf("X:") + 2;
+  int xEnd = data.indexOf(',', xStart);
+  int yStart = data.indexOf("Y:") + 2;
+  int yEnd = data.indexOf(',', yStart);
+  int classStart = data.indexOf("CLASS:") + 6;
+  int classEnd = data.indexOf(',', classStart);
+  int confStart = data.indexOf("CONF:") + 5;
+  
+  int index = data.substring(3, idEnd).toInt();
+  
+  if (index < MAX_OBJECTS) {
+    detectedObjects[index].x = data.substring(xStart, xEnd).toFloat();
+    detectedObjects[index].y = data.substring(yStart, yEnd).toFloat();
+    detectedObjects[index].className = data.substring(classStart, classEnd);
+    detectedObjects[index].confidence = data.substring(confStart).toFloat();
+  }
+}
+
+// Process detection results
+void processDetectionResults() {
+  Serial.print("Detected ");
+  Serial.print(objectCount);
+  Serial.println(" objects");
+  
+  for (int i = 0; i < objectCount; i++) {
+    Serial.print("Object ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.print(detectedObjects[i].className);
+    Serial.print(" (");
+    Serial.print(detectedObjects[i].confidence);
+    Serial.println(")");
+  }
+}
+
+// Function to detect specific food
+bool findFood(String foodType) {
+  cameraServo.write(CAMERA_LEFT);
+  delay(1000);
+  
+  // Check left position
+  requestDetection();
+  while (detectionInProgress) {
+    checkDetectionResults();
+    delay(10);
+  }
+  
+  // Check for target food
+  for (int i = 0; i < objectCount; i++) {
+    if (detectedObjects[i].className == foodType && detectedObjects[i].confidence > 0.6) {
+      return true;
+    }
+  }
+  
+  // Check center position
+  cameraServo.write(CAMERA_CENTER);
+  delay(1000);
+  requestDetection();
+  while (detectionInProgress) {
+    checkDetectionResults();
+    delay(10);
+  }
+  
+  // Check for target food
+  for (int i = 0; i < objectCount; i++) {
+    if (detectedObjects[i].className == foodType && detectedObjects[i].confidence > 0.6) {
+      return true;
+    }
+  }
+  
+  // Check right position
+  cameraServo.write(CAMERA_RIGHT);
+  delay(1000);
+  requestDetection();
+  while (detectionInProgress) {
+    checkDetectionResults();
+    delay(10);
+  }
+  
+  // Check for target food
+  for (int i = 0; i < objectCount; i++) {
+    if (detectedObjects[i].className == foodType && detectedObjects[i].confidence > 0.6) {
+      return true;
+    }
+  }
+  
+  // Target food not found
+  return false;
+}
+
+// Code to collect the milk
+void collectMilk() {
+  Serial.println("Starting milk collection task");
+  
+  // Follow line to milk station
+  while (true) {
+    int extra_result = analogRead(Extra_IRSensor);
+    if (extra_result > 300) {
+      junction();
+      break;
+    } else {
+      PID();
+    }
+  }
+  
+  // At milk junction, collect milk
+  moveforward(-150); // Move back slightly
+  delay(500);
+  gateServo.write(GATE_OPEN); // Open gate
+  delay(1000);
+  
+  // Turn around and follow line back
+  turning(-150, 150);
+  delay(1000); // Adjust for ~180 degree turn
+  
+  // Return to tray
+  returnToTray();
+  
+  // Close gate to secure milk
+  gateServo.write(GATE_CLOSED);
+  delay(500);
+  
+  Serial.println("Milk collection completed");
+  taskCompleted[MILK_TASK] = true;
+}
+
+// Code to collect the food
+void collectFood() {
+  Serial.println("Starting food collection task");
+  
+  // Follow line to food station junction
+  while (true) {
+    int extra_result = analogRead(Extra_IRSensor);
+    if (extra_result > 300) {
+      middle_junction();
+      break;
+    } else {
+      PID();
+    }
+  }
+  
+  // At food junction, look for target food
+  nomove();
+  
+  // Reset camera to center position
+  cameraServo.write(CAMERA_CENTER);
+  delay(500);
+  
+  // Find the target food
+  Serial.print("Looking for ");
+  Serial.println(targetFood);
+  
+  bool foodFound = findFood(targetFood);
+  
+  if (foodFound) {
+    Serial.print("Found ");
+    Serial.println(targetFood);
+    
+    // Position is already correct from findFood function
+    
+    // Collect food
+    moveforward(150);
+    delay(1000);
+    gateServo.write(GATE_OPEN);
+    delay(1000);
+    moveback(150);
+    delay(1000);
+    gateServo.write(GATE_CLOSED);
+    delay(500);
+    
+    // Return to tray
+    returnToTray();
+    
+    Serial.println("Food collection completed");
+    taskCompleted[FOOD_TASK] = true;
+  } else {
+    Serial.println("Target food not found!");
+    // Return to tray anyway
+    returnToTray();
+  }
+}
+
+// Code to collect the water
+void collectWater() {
+  Serial.println("Starting water collection task");
+  
+  // Follow line to water station
+  while (true) {
+    int rightright_result = analogRead(rightright_IRSensor);
+    if (rightright_result > 300) {
+      water_junction();
+      break;
+    } else {
+      PID();
+    }
+  }
+  
+  // At water junction, collect water
+  moveforward(150);
+  delay(1000);
+  gateServo.write(GATE_OPEN);
+  delay(1000);
+  moveback(150);
+  delay(1000);
+  gateServo.write(GATE_CLOSED);
+  delay(500);
+  
+  // Return to tray
+  returnToTray();
+  
+  Serial.println("Water collection completed");
+  taskCompleted[WATER_TASK] = true;
+}
+
+// Function to execute a specific task
+void executeTask(TaskType task) {
+  switch (task) {
+    case MILK_TASK:
+      collectMilk();
+      break;
+    case FOOD_TASK:
+      collectFood();
+      break;
+    case WATER_TASK:
+      collectWater();
+      break;
+  }
+}
+
+// Function to read task order from serial
+void readTaskOrder() {
+  Serial.println("Enter task order (M=Milk, F=Food, W=Water):");
+  Serial.println("Example: MFW for Milk->Food->Water");
+  
+  while (!Serial.available()) {
+    delay(100);
+  }
+  
+  String order = Serial.readStringUntil('\n');
+  order.trim();
+  
+  Serial.print("Task order received: ");
+  Serial.println(order);
+  
+  // Also read target food
+  Serial.println("Enter target food (sandwich, hotdog, burger):");
+  while (!Serial.available()) {
+    delay(100);
+  }
+  
+  targetFood = Serial.readStringUntil('\n');
+  targetFood.trim();
+  
+  Serial.print("Target food: ");
+  Serial.println(targetFood);
+}
 
 void setup() {
-  // Initialize serial communication at 9600 bits per second.
-  // Make sure this baud rate matches the setting in your Python script
-  // or Serial Monitor.
   Serial.begin(9600);
   
-  Serial.println("Arduino Serial Echo Test Ready.");
-  Serial.println("Send any message (ending with newline) to test.");
-  Serial.println("--------------------------------------------");
+  // Wait for serial connection to establish
+  delay(2000);
+  
+  // Attach servos
+  cameraServo.attach(9);  // Assuming camera servo on pin 9
+  gateServo.attach(13);   // Gate servo on pin 13
+  
+  // Initialize servo positions
+  cameraServo.write(CAMERA_CENTER);
+  gateServo.write(GATE_CLOSED);
+  
+  // Wait for Raspberry Pi to be ready
+  delay(5000);
+  
+  // Read task order and target food
+  readTaskOrder();
+  
+  Serial.println("Robot initialized and ready!");
 }
 
 void loop() {
-  // Check if there's any data available to read from the serial port
+  // Check for any ongoing detection results
+  checkDetectionResults();
+  
+  // Process serial commands if any
   if (Serial.available() > 0) {
-    // Read the incoming string until a newline character ('\n') is received
-    incomingMessage = Serial.readStringUntil('\n');
+    String command = Serial.readStringUntil('\n');
+    command.trim();
     
-    // Remove any leading/trailing whitespace (like carriage returns if sent from some terminals)
-    incomingMessage.trim(); 
-
-    if (incomingMessage.length() > 0) {
-      // Print the received message to the Serial Monitor (for Arduino-side debugging)
-      Serial.print("Received on Arduino: '");
-      Serial.print(incomingMessage);
-      Serial.println("'");
-
-      // Echo the received message back to the sender (Python script or Serial Monitor)
-      Serial.print("Arduino Echo: ");
-      Serial.println(incomingMessage);
+    if (command == "START") {
+      // Reset task completion status
+      for (int i = 0; i < 3; i++) {
+        taskCompleted[i] = false;
+      }
+      
+      // Execute tasks in specified order
+      for (int i = 0; i < 3; i++) {
+        executeTask((TaskType)i);
+        delay(1000);
+      }
+      
+      Serial.println("All tasks completed!");
+    }
+    else if (command.startsWith("FOOD:")) {
+      targetFood = command.substring(5);
+      Serial.print("Target food set to: ");
+      Serial.println(targetFood);
+    }
+    else if (command == "MILK") {
+      collectMilk();
+    }
+    else if (command == "FOOD") {
+      collectFood();
+    }
+    else if (command == "WATER") {
+      collectWater();
     }
   }
 }
