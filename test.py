@@ -1,8 +1,16 @@
 import cv2
+import os
 import time
 from roboflow import Roboflow
-import os
+import threading
+import numpy as np
+from dotenv import load_dotenv
+from datetime import datetime
 import serial
+
+# Load environment variables
+load_dotenv()
+api_key = os.getenv("ROBOFLOW_API")
 
 # Try to connect to Arduino (will fail gracefully if not connected)
 arduino = None
@@ -20,9 +28,22 @@ if not arduino:
     print(" - Press 'd' to run detection")
     print(" - Press 'q' to quit")
 
+# Explicitly start window thread - THIS WAS MISSING
+cv2.startWindowThread()
+
+# Create window first before capturing - THIS WAS MISSING
+cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
+
+# Initialize Roboflow model
+print("Initializing Roboflow model...")
+rf = Roboflow(api_key=api_key)
+project = rf.workspace().project("idc2")
+model = project.version("15").model  # USING VERSION 15 LIKE OG.TXT
+print("Model initialized!")
+
 # Initialize camera
 print("Setting up camera...")
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(0)  # USB camera index 0
 
 # If camera doesn't open, try other indices
 if not cap.isOpened():
@@ -37,67 +58,48 @@ if not cap.isOpened():
         print("ERROR: Could not open any camera")
         exit(1)
 
-# Set resolution
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+# Set resolution (lower for better performance)
+resW, resH = 640, 480
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
+
+# Set buffer size to minimum - THIS WAS MISSING
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 print("Camera ready!")
 
-# Initialize Roboflow model - EXACT OG.TXT APPROACH
-print("Initializing Roboflow model...")
-rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")  # Use the hardcoded key from og.txt
-project = rf.workspace().project("idc2")
-model = project.version("14").model  # Make sure version matches og.txt
-print("Model initialized!")
+# Set bounding box colors
+bbox_colors = [(0, 255, 0)]  # Green for bounding boxes
 
-# Temp file for saving frames
-temp_file = "temp_frame.jpg"
+# Resize settings for detection (smaller is faster) - THIS WAS MISSING
+detection_width, detection_height = 320, 240
+
+# Global flag to store detection result - THIS WAS MISSING
+detection_result = None
+detection_lock = threading.Lock()
 
 def run_detection(frame):
-    """Run object detection on the provided frame"""
-    print("Running detection...")
+    """Threaded detection function"""
+    global detection_result
     
-    try:
-        # Save frame temporarily for Roboflow - EXACT APPROACH FROM OG.TXT
-        cv2.imwrite(temp_file, frame)
-        
-        # Run prediction exactly as in og.txt
-        predictions = model.predict(temp_file, confidence=40, overlap=30).json()
-        print(f"Received {len(predictions.get('predictions', []))} detections")
-        
-        # Display the detections on the frame
-        result_frame = frame.copy()
-        if 'predictions' in predictions:
-            for pred in predictions['predictions']:
-                x1 = int(pred['x'] - pred['width'] / 2)
-                y1 = int(pred['y'] - pred['height'] / 2)
-                x2 = int(pred['x'] + pred['width'] / 2)
-                y2 = int(pred['y'] + pred['height'] / 2)
-                
-                # Draw bounding box and label
-                cv2.rectangle(result_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                label = f"{pred['class']}: {int(pred['confidence']*100)}%"
-                cv2.putText(result_frame, label, (x1, y1-10), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                
-                # Print detection details
-                print(f"Detected {pred['class']} with {pred['confidence']:.2f} confidence")
-        
-        # Display results
-        cv2.imshow("Detection Result", result_frame)
-        cv2.waitKey(1)
-        
-        return predictions
+    # Resize frame for faster processing - THIS WAS MISSING
+    resized_frame = cv2.resize(frame, (detection_width, detection_height))
+
+    # Run prediction directly on the resized frame - THIS WAS DIFFERENT
+    predictions = model.predict(resized_frame, confidence=40, overlap=30).json()
+
+    # Acquire lock to safely update global detection result
+    with detection_lock:
+        detection_result = (predictions, resized_frame)
     
-    except Exception as e:
-        print(f"Error in detection: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {"predictions": []}
+    # Send results to Arduino if connected
+    if arduino:
+        send_results_to_arduino(predictions)
+    
+    print(f"Detection complete - Objects found: {len(predictions.get('predictions', []))}")
 
 def send_results_to_arduino(predictions):
     """Send detection results to Arduino"""
     if not arduino:
-        print("Arduino not connected, cannot send results")
         return
     
     try:
@@ -111,8 +113,8 @@ def send_results_to_arduino(predictions):
         # Send each object
         if 'predictions' in predictions:
             for i, pred in enumerate(predictions['predictions']):
-                x = pred['x'] / 640  # Normalize x to 0-1 range
-                y = pred['y'] / 480  # Normalize y to 0-1 range
+                x = pred['x'] / detection_width  # Normalize x to 0-1 range
+                y = pred['y'] / detection_height  # Normalize y to 0-1 range
                 class_name = pred['class']
                 confidence = pred['confidence']
                 
@@ -128,11 +130,50 @@ def send_results_to_arduino(predictions):
 
 # Main loop
 print("Detection server running.")
-if not arduino:
-    print("Use 'd' key to trigger detection manually")
+print("Press 'd' to run detection, 'q' to quit")
 
 try:
     while True:
+        # Capture frame
+        ret, frame = cap.read()
+        if not ret:
+            print('Unable to read frames from the camera. Camera may be disconnected. Exiting program.')
+            break
+
+        # Display the frame
+        cv2.imshow('Camera Feed', frame)
+
+        # If there is a detection result, draw it - THIS WAS DIFFERENT
+        with detection_lock:
+            if detection_result:
+                predictions, detection_frame = detection_result
+                for prediction in predictions['predictions']:
+                    x1 = int(prediction['x'] - prediction['width'] / 2)
+                    y1 = int(prediction['y'] - prediction['height'] / 2)
+                    x2 = int(prediction['x'] + prediction['width'] / 2)
+                    y2 = int(prediction['y'] + prediction['height'] / 2)
+
+                    # Draw bounding box
+                    color = bbox_colors[0]
+                    cv2.rectangle(detection_frame, (x1, y1), (x2, y2), color, 2)
+
+                    # Add label
+                    label = f"{prediction['class']}: {int(prediction['confidence']*100)}%"
+                    cv2.putText(detection_frame, label, (x1, y1 - 5), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+                # Display detection results
+                cv2.imshow('Detection Results', detection_frame)
+
+                # Save the frame
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_name = f'detected_frame_{timestamp}.png'
+                cv2.imwrite(save_name, detection_frame)
+                print(f"Frame saved as: {save_name}")
+
+                # Clear the detection result after displaying
+                detection_result = None
+
         # Check for Arduino commands if connected
         if arduino and arduino.in_waiting > 0:
             command = arduino.readline().decode().strip()
@@ -142,58 +183,29 @@ try:
                 # Capture frame
                 ret, frame = cap.read()
                 if ret:
-                    # Run detection
-                    start_time = time.time()
-                    predictions = run_detection(frame)
-                    detection_time = time.time() - start_time
-                    print(f"Detection completed in {detection_time:.2f} seconds")
-                    
-                    # Send results back to Arduino
-                    send_results_to_arduino(predictions)
+                    # Run detection in a thread
+                    print("\n--- Running detection from Arduino command ---")
+                    threading.Thread(target=run_detection, args=(frame,)).start()
                 else:
                     print("Error: Could not capture frame")
                     if arduino:
                         arduino.write(b"ERROR\n")
         
-        # Display camera feed when not detecting
-        ret, frame = cap.read()
-        if ret:
-            cv2.imshow("Camera Feed", frame)
-        
-        # Check for keyboard input
+        # Handle key presses
         key = cv2.waitKey(5) & 0xFF
         if key == ord('q'):
             break
         elif key == ord('d'):  # Manual detection trigger
-            if ret:
-                start_time = time.time()
-                predictions = run_detection(frame)
-                detection_time = time.time() - start_time
-                print(f"Detection completed in {detection_time:.2f} seconds")
-                
-                # Print detailed detection results
-                if 'predictions' in predictions and len(predictions['predictions']) > 0:
-                    print("\nDetected objects:")
-                    for i, pred in enumerate(predictions['predictions']):
-                        print(f"  {i+1}. {pred['class']} ({pred['confidence']*100:.1f}%)")
-                else:
-                    print("No objects detected")
-            else:
-                print("Error: Could not capture frame")
-        
-        # Small delay to prevent high CPU usage
-        time.sleep(0.01)
+            print("\n--- Running detection on current frame ---")
+            threading.Thread(target=run_detection, args=(frame,)).start()
 
 except KeyboardInterrupt:
-    print("Shutting down...")
+    print("\nStopping detection...")
 except Exception as e:
     print(f"Error in main loop: {str(e)}")
     import traceback
     traceback.print_exc()
 finally:
-    # Clean up temp file
-    if os.path.exists(temp_file):
-        os.remove(temp_file)
     if arduino:
         arduino.close()
     cap.release()
