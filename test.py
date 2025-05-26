@@ -2,18 +2,7 @@ import cv2
 import time
 from roboflow import Roboflow
 import os
-import numpy as np
-from dotenv import load_dotenv
 import serial
-
-# Load environment variables
-load_dotenv()
-api_key = os.getenv('ROBOFLOW_API')
-
-# Check for API key
-if not api_key:
-    print("ERROR: Missing Roboflow API key. Create a .env file with ROBOFLOW_API=your_key")
-    exit(1)
 
 # Try to connect to Arduino (will fail gracefully if not connected)
 arduino = None
@@ -53,29 +42,27 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 print("Camera ready!")
 
-# Initialize Roboflow model - USING THE SDK APPROACH
+# Initialize Roboflow model - EXACT OG.TXT APPROACH
 print("Initializing Roboflow model...")
-rf = Roboflow(api_key=api_key)
+rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")  # Use the hardcoded key from og.txt
 project = rf.workspace().project("idc2")
-model = project.version("13").model
+model = project.version("14").model  # Make sure version matches og.txt
 print("Model initialized!")
+
+# Temp file for saving frames
+temp_file = "temp_frame.jpg"
 
 def run_detection(frame):
     """Run object detection on the provided frame"""
     print("Running detection...")
     
     try:
-        # Save frame temporarily for Roboflow
-        temp_file = "temp_frame.jpg"
+        # Save frame temporarily for Roboflow - EXACT APPROACH FROM OG.TXT
         cv2.imwrite(temp_file, frame)
         
-        # Run prediction using the SDK
+        # Run prediction exactly as in og.txt
         predictions = model.predict(temp_file, confidence=40, overlap=30).json()
         print(f"Received {len(predictions.get('predictions', []))} detections")
-        
-        # Clean up temp file
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
         
         # Display the detections on the frame
         result_frame = frame.copy()
@@ -204,6 +191,9 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 finally:
+    # Clean up temp file
+    if os.path.exists(temp_file):
+        os.remove(temp_file)
     if arduino:
         arduino.close()
     cap.release()
