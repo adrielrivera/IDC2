@@ -3,13 +3,18 @@ import time
 import numpy as np
 import requests
 import json
+from dotenv import load_dotenv
 import os
 import serial
-from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 api_key = os.getenv('ROBOFLOW_API')
+
+# Check for API key
+if not api_key:
+    print("ERROR: Missing Roboflow API key. Create a .env file with ROBOFLOW_API=your_key")
+    exit(1)
 
 # Try to connect to Arduino (will fail gracefully if not connected)
 arduino = None
@@ -30,6 +35,21 @@ if not arduino:
 # Initialize camera
 print("Setting up camera...")
 cap = cv2.VideoCapture(0)
+
+# If camera doesn't open, try other indices
+if not cap.isOpened():
+    for camera_index in [1, 2, -1]:
+        print(f"Trying camera index: {camera_index}")
+        cap = cv2.VideoCapture(camera_index)
+        if cap.isOpened():
+            print(f"Successfully opened camera {camera_index}")
+            break
+    
+    if not cap.isOpened():
+        print("ERROR: Could not open any camera")
+        exit(1)
+
+# Set resolution
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 print("Camera ready!")
@@ -56,10 +76,16 @@ def run_detection(frame):
             data=image_base64
         )
         
+        # Check for successful response
+        if response.status_code != 200:
+            print(f"Error: API returned status code {response.status_code}")
+            print(f"Response: {response.text}")
+            return {"predictions": []}
+            
         predictions = response.json()
         print(f"Received {len(predictions.get('predictions', []))} detections")
         
-        # Display the detections on the frame (for debugging)
+        # Display the detections on the frame
         result_frame = frame.copy()
         if 'predictions' in predictions:
             for pred in predictions['predictions']:
@@ -85,6 +111,8 @@ def run_detection(frame):
     
     except Exception as e:
         print(f"Error in detection: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return {"predictions": []}
 
 def send_results_to_arduino(predictions):
@@ -163,6 +191,14 @@ try:
                 predictions = run_detection(frame)
                 detection_time = time.time() - start_time
                 print(f"Detection completed in {detection_time:.2f} seconds")
+                
+                # Print detailed detection results
+                if 'predictions' in predictions and len(predictions['predictions']) > 0:
+                    print("\nDetected objects:")
+                    for i, pred in enumerate(predictions['predictions']):
+                        print(f"  {i+1}. {pred['class']} ({pred['confidence']*100:.1f}%)")
+                else:
+                    print("No objects detected")
             else:
                 print("Error: Could not capture frame")
         
@@ -173,6 +209,8 @@ except KeyboardInterrupt:
     print("Shutting down...")
 except Exception as e:
     print(f"Error in main loop: {str(e)}")
+    import traceback
+    traceback.print_exc()
 finally:
     if arduino:
         arduino.close()
