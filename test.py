@@ -1,10 +1,9 @@
 import cv2
 import time
-import numpy as np
-import requests
-import json
-from dotenv import load_dotenv
+from roboflow import Roboflow
 import os
+import numpy as np
+from dotenv import load_dotenv
 import serial
 
 # Load environment variables
@@ -54,36 +53,29 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 print("Camera ready!")
 
-# Roboflow API setup
-API_URL = f"https://detect.roboflow.com/idc2/13"
-HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
-PARAMS = {"api_key": api_key, "confidence": 40, "overlap": 30}
+# Initialize Roboflow model - USING THE SDK APPROACH
+print("Initializing Roboflow model...")
+rf = Roboflow(api_key=api_key)
+project = rf.workspace().project("idc2")
+model = project.version("13").model
+print("Model initialized!")
 
 def run_detection(frame):
     """Run object detection on the provided frame"""
     print("Running detection...")
     
     try:
-        # Encode image for API
-        _, img_encoded = cv2.imencode('.jpg', frame)
-        image_base64 = img_encoded.tobytes()
+        # Save frame temporarily for Roboflow
+        temp_file = "temp_frame.jpg"
+        cv2.imwrite(temp_file, frame)
         
-        # Send to Roboflow API
-        response = requests.post(
-            API_URL,
-            params=PARAMS,
-            headers=HEADERS,
-            data=image_base64
-        )
-        
-        # Check for successful response
-        if response.status_code != 200:
-            print(f"Error: API returned status code {response.status_code}")
-            print(f"Response: {response.text}")
-            return {"predictions": []}
-            
-        predictions = response.json()
+        # Run prediction using the SDK
+        predictions = model.predict(temp_file, confidence=40, overlap=30).json()
         print(f"Received {len(predictions.get('predictions', []))} detections")
+        
+        # Clean up temp file
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
         
         # Display the detections on the frame
         result_frame = frame.copy()
