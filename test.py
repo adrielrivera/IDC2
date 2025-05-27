@@ -8,72 +8,59 @@ from dotenv import load_dotenv
 from datetime import datetime
 import serial
 
-# Load environment variables
 load_dotenv()
-api_key = os.getenv("ROBOFLOW_API")
+api_key = os.getenv("ROBOFLOW_API") 
 
-# Try to connect to Arduino (will fail gracefully if not connected)
-arduino = None
-for port in ['/dev/ttyACM0', '/dev/ttyUSB0', '/dev/ttyACM1', '/dev/ttyUSB1']:
-    try:
-        arduino = serial.Serial(port, 9600, timeout=1)
-        print(f"Connected to Arduino on {port}")
-        time.sleep(2)  # Wait for Arduino to reset
-        break
-    except:
-        pass
+# --- Serial Communication Setup ---
+SERIAL_PORT = "/dev/ttyACM0"  # <-- !!! REPLACE WITH YOUR ACTUAL PORT !!!
+BAUD_RATE = 9600
+ser = None
+try:
+    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+    print(f"Successfully connected to Arduino on port {SERIAL_PORT}")
+except serial.SerialException as e:
+    print(f"Error: Could not open serial port {SERIAL_PORT}: {e}")
+    print("Please check the port name and ensure Arduino is connected.")
+    ser = None # Ensure ser is None if connection failed
+# --------------------------------
 
-if not arduino:
-    print("WARNING: Arduino not connected. You can use keyboard controls instead:")
-    print(" - Press 'd' to run detection")
-    print(" - Press 'q' to quit")
-
-# Explicitly start window thread - THIS WAS MISSING
+# Explicitly start window thread
 cv2.startWindowThread()
 
-# Create window first before capturing - THIS WAS MISSING
+# Create window first before capturing
 cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
 
 # Initialize Roboflow model
 print("Initializing Roboflow model...")
 rf = Roboflow(api_key=api_key)
 project = rf.workspace().project("idc2")
-model = project.version("15").model  # USING VERSION 15 LIKE OG.TXT
+model = project.version("15").model
 print("Model initialized!")
 
 # Initialize camera
 print("Setting up camera...")
 cap = cv2.VideoCapture(0)  # USB camera index 0
 
-# If camera doesn't open, try other indices
-if not cap.isOpened():
-    for camera_index in [1, 2, -1]:
-        print(f"Trying camera index: {camera_index}")
-        cap = cv2.VideoCapture(camera_index)
-        if cap.isOpened():
-            print(f"Successfully opened camera {camera_index}")
-            break
-    
-    if not cap.isOpened():
-        print("ERROR: Could not open any camera")
-        exit(1)
-
 # Set resolution (lower for better performance)
 resW, resH = 640, 480
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, resW)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, resH)
 
-# Set buffer size to minimum - THIS WAS MISSING
+# Set buffer size to minimum
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 print("Camera ready!")
 
 # Set bounding box colors
 bbox_colors = [(0, 255, 0)]  # Green for bounding boxes
 
-# Resize settings for detection (smaller is faster) - THIS WAS MISSING
+# Resize settings for detection (smaller is faster)
 detection_width, detection_height = 320, 240
 
-# Global flag to store detection result - THIS WAS MISSING
+# Display instructions
+print("Press 'd' to run detection on the current frame")
+print("Press 'q' to quit")
+
+# Global flag to store detection result
 detection_result = None
 detection_lock = threading.Lock()
 
@@ -81,56 +68,39 @@ def run_detection(frame):
     """Threaded detection function"""
     global detection_result
     
-    # Resize frame for faster processing - THIS WAS MISSING
+    # Resize frame for faster processing
     resized_frame = cv2.resize(frame, (detection_width, detection_height))
 
-    # Run prediction directly on the resized frame - THIS WAS DIFFERENT
+    # Run prediction directly on the resized frame
     predictions = model.predict(resized_frame, confidence=40, overlap=30).json()
 
     # Acquire lock to safely update global detection result
     with detection_lock:
         detection_result = (predictions, resized_frame)
     
-    # Send results to Arduino if connected
-    if arduino:
-        send_results_to_arduino(predictions)
-    
+    # Send detected classes to Arduino if serial is available
+    if ser and ser.is_open and predictions.get('predictions'):
+        detected_classes = set() # Use a set to send each class name once per frame
+        for p in predictions['predictions']:
+            detected_classes.add(p['class'])
+        for cls_name in detected_classes:
+            command_to_send = f"DETECTED_{cls_name.upper()}\n"
+            ser.write(command_to_send.encode('utf-8'))
+            print(f"Sent to Arduino: {command_to_send.strip()}")
+            time.sleep(0.05) # Small delay between commands if sending multiple
+
+            # ---- ADDED: Read echo from Arduino ----
+            # Wait a brief moment for Arduino to process and reply
+            time.sleep(0.1) # Adjust if needed
+            if ser.in_waiting > 0: # Check if there's data to read
+                try:
+                    echo_response = ser.readline().decode('utf-8').strip()
+                    print(f"Received from Arduino: {echo_response}")
+                except Exception as e:
+                    print(f"Error reading from Arduino: {e}")
+            # ---- END OF ADDED CODE ----
+
     print(f"Detection complete - Objects found: {len(predictions.get('predictions', []))}")
-
-def send_results_to_arduino(predictions):
-    """Send detection results to Arduino"""
-    if not arduino:
-        return
-    
-    try:
-        # Start marker
-        arduino.write(b"START\n")
-        
-        # Send count
-        num_objects = len(predictions.get('predictions', []))
-        arduino.write(f"COUNT:{num_objects}\n".encode())
-        
-        # Send each object
-        if 'predictions' in predictions:
-            for i, pred in enumerate(predictions['predictions']):
-                x = pred['x'] / detection_width  # Normalize x to 0-1 range
-                y = pred['y'] / detection_height  # Normalize y to 0-1 range
-                class_name = pred['class']
-                confidence = pred['confidence']
-                
-                object_info = f"ID:{i},X:{x:.2f},Y:{y:.2f},CLASS:{class_name},CONF:{confidence:.2f}\n"
-                arduino.write(object_info.encode())
-        
-        # End marker
-        arduino.write(b"END\n")
-        print("Results sent to Arduino")
-    
-    except Exception as e:
-        print(f"Error sending to Arduino: {str(e)}")
-
-# Main loop
-print("Detection server running.")
-print("Press 'd' to run detection, 'q' to quit")
 
 try:
     while True:
@@ -143,7 +113,7 @@ try:
         # Display the frame
         cv2.imshow('Camera Feed', frame)
 
-        # If there is a detection result, draw it - THIS WAS DIFFERENT
+        # If there is a detection result, draw it
         with detection_lock:
             if detection_result:
                 predictions, detection_frame = detection_result
@@ -174,28 +144,11 @@ try:
                 # Clear the detection result after displaying
                 detection_result = None
 
-        # Check for Arduino commands if connected
-        if arduino and arduino.in_waiting > 0:
-            command = arduino.readline().decode().strip()
-            print(f"Received command: {command}")
-            
-            if command == "DETECT":
-                # Capture frame
-                ret, frame = cap.read()
-                if ret:
-                    # Run detection in a thread
-                    print("\n--- Running detection from Arduino command ---")
-                    threading.Thread(target=run_detection, args=(frame,)).start()
-                else:
-                    print("Error: Could not capture frame")
-                    if arduino:
-                        arduino.write(b"ERROR\n")
-        
         # Handle key presses
         key = cv2.waitKey(5) & 0xFF
         if key == ord('q'):
             break
-        elif key == ord('d'):  # Manual detection trigger
+        elif key == ord('d'):  
             print("\n--- Running detection on current frame ---")
             threading.Thread(target=run_detection, args=(frame,)).start()
 
@@ -203,11 +156,13 @@ except KeyboardInterrupt:
     print("\nStopping detection...")
 except Exception as e:
     print(f"Error in main loop: {str(e)}")
-    import traceback
-    traceback.print_exc()
-finally:
-    if arduino:
-        arduino.close()
-    cap.release()
-    cv2.destroyAllWindows()
-    print("Done!")
+
+# Clean up
+cap.release()
+cv2.destroyAllWindows()
+# --- Close Serial Port --- #
+if ser and ser.is_open:
+    ser.close()
+    print("Serial port closed.")
+# -------------------------
+print("Done!")
