@@ -1,8 +1,63 @@
+#include <Servo.h>
+#include "CytronMotorDriver.h"
+
 // Global variables for detection
 String detectionResult = "";
 bool objectDetected = false;
 unsigned long lastDetectionTime = 0;
 const unsigned long DETECTION_INTERVAL = 3000; // 3 seconds between detections
+// Motor Pin Declaration
+CytronMD motor1(PWM_PWM, 5, 6);   // PWM 1A = Pin 5, PWM 1B = Pin 6.
+CytronMD motor2(PWM_PWM, 3, 11); // PWM 2A = Pin 9, PWM 2B = Pin 10.
+
+//Line IR Decelartion
+const int Left_IRSensor = A0; // connect IR sensor module to Analog Pin A0
+const int Right_IRSensor = A1; // connect IR sensor module to Analog Pin A1
+const int Extra_IRSensor = A2; // connect IR sensor module to Analog Pin A2
+const int rightright_IRSensor = A3; // // connect IR sensor module to Analog Pin A3
+
+
+// Declaring Servos
+Servo cameraServo; 
+Servo gateServo; 
+
+// sexy servos
+int GATE_OPEN = 0;
+int GATE_CLOSED = 80;
+
+
+
+//Motor functions
+void moveforward(int chosen_forward) {
+  motor1.setSpeed(chosen_forward);
+  motor2.setSpeed(chosen_forward);
+}
+
+void moveback(int chosen_back) {
+  motor1.setSpeed(chosen_back);
+  motor2.setSpeed(chosen_back);
+}
+
+void turning(int left, int right) {
+  motor1.setSpeed(left);
+  motor2.setSpeed(right);
+}
+
+void nomove() {
+  motor1.setSpeed(0);
+  motor2.setSpeed(0);
+}
+
+// Global Variable for pid
+double error = 0;
+double lasterror = 0;
+double moving = 0;
+double integral = 0;
+
+// Constants for pid
+double kp = 0.7; 
+double ki = 0;
+double kd = 1;
 
 // Function to request and handle detection
 bool requestDetection() {
@@ -53,7 +108,6 @@ bool requestDetection() {
   
   return true;
 }
-
 // Test function
 void testDetection() {
   Serial.println("\n--- Starting Detection Test ---");
@@ -68,4 +122,244 @@ void testDetection() {
   }
   
   delay(3000);  // Wait before next test
+}
+// PID Code
+void PID() {
+  //Getting the readings of the left and right IR sensor
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+
+  // Map the results, white first, black second
+  left_result = map(left_result, 59, 656, 0, 100);
+  right_result = map(right_result, 65 , 757, 0, 100);
+
+  // Tracking code
+  error = left_result - right_result;
+  integral += error; // testing
+  double derivative = error - lasterror;
+  moving = kp * error + ki * integral + kd * derivative;
+  turning(150 - moving, 150 + moving);
+  lasterror = error;
+  delay(30);
+
+}
+
+//Normal Junction Code (for milk and normal junction)
+void junction() {
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+
+    if (left_result > 300 and right_result > 300) {
+      nomove();
+      break;
+    } else {
+      PID();
+    }
+  }
+}
+
+
+
+//Middle Junction Code (to collect the food)
+void middle_junction() {
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+    int extra_result = analogRead(Extra_IRSensor);
+
+    if (extra_result > 300) {
+      nomove();
+      break;
+    }  else {
+      PID();
+    }
+  }
+}
+
+// Junction to collect the water
+void water_junction(){
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+    int extra_result = analogRead(Extra_IRSensor);
+    int rightright_result = analogRead(rightright_IRSensor);
+
+    if (rightright_result > 300) {
+      nomove();
+      break;
+    } else {
+      PID();
+    }
+  }
+}
+
+// Code to collect the milk
+void milk() {
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+  int extra_result = analogRead(Extra_IRSensor);
+  
+  junction();
+  moveforward(-150);
+  delay(0.5);
+  gateServo.write(180);
+  delay(1000);
+  while (extra_result < 300) {
+    extra_result = analogRead(Extra_IRSensor);
+    turning(-150, 150);
+  }
+  turning(-150,150);
+  delay(0.1);
+  PID();
+  delay(2);
+  moveforward(150);
+}
+
+// Code to collect the water
+void water() {
+  junction();
+}
+// Function to collect milk with simplified backward approach
+void collectMilk() {
+  // // Approach the milk station
+  // junction();
+  // nomove();
+  // delay(500);
+  
+  // // Position robot correctly
+  // moveforward(-150);
+  // delay(300);
+  // nomove();
+  // delay(200);
+  
+  // // Open gate to collect milk (gate already open at startup)
+  // // gateServo.write(GATE_OPEN); // Not needed if starting open
+  // delay(1500);  // Allow time for milk to enter
+  
+  // // Close gate to secure milk
+  // gateServo.write(GATE_CLOSED);
+  // delay(500);
+  
+  // // Back up after collecting - no turning
+  // moveforward(-150);
+  // delay(1500);  // Back up for 1.5 seconds
+  // nomove();
+  // delay(200);
+  
+  // // Resume forward movement
+  // moveforward(150);
+  // Approach the milk station
+  junction();
+  nomove();
+  delay(500);
+  
+  // Position robot correctly
+  // moveforward(-150);
+  delay(300);
+  nomove();
+  delay(200);
+  
+  // Open gate to collect milk (gate already open at startup)
+  // Not needed if starting open
+  
+  delay(1500);  // Allow time for milk to enter
+  
+  // Close gate to secure milk
+  gateServo.write(GATE_CLOSED);
+  delay(500);
+  
+  // Line track backward until reaching a specific point
+  // Track backward for a set time or until sensor condition
+  unsigned long startTime = millis();
+  while (millis() - startTime < 3000) { // Track backward for 3 seconds
+    PID_Backward();
+  }
+  
+  nomove();
+  delay(200);
+}
+// Test function for gate operation
+void testGate() {
+  Serial.println("Testing gate...");
+  // Close gate (default position)
+  gateServo.write(GATE_CLOSED);
+  Serial.println("Gate closed");
+  delay(2000);
+  
+  // Open gate
+  gateServo.write(GATE_OPEN);
+  Serial.println("Gate open");
+  delay(2000);
+  
+  // Return to closed position
+  gateServo.write(GATE_CLOSED);
+  Serial.println("Gate returned to closed");
+}
+
+// Function for backward line following
+void PID_Backward() {
+  //Getting the readings of the left and right IR sensor
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+
+  // Map the results, white first, black second
+  left_result = map(left_result, 59, 490, 0, 100);
+  right_result = map(right_result, 65, 771, 0, 100);
+
+  // Tracking code (note: error calculation swapped for reverse direction)
+  error = right_result - left_result; // Swapped for backward movement
+  integral += error;
+  double derivative = error - lasterror;
+  moving = kp * error + ki * integral + kd * derivative;
+  turning(-150 + moving, -150 - moving); // Negative speeds for backward
+  lasterror = error;
+  delay(30);
+}
+
+// The setup routine runs once when you press reset.
+void setup() {
+  //  pinMode(Left_IRSensor, INPUT); // Set the pin as an input
+  //  pinMode(Right_IRSensor, INPUT); // Set the pin as an input
+  Serial.begin(9600); // Initialize serial communication for debugging
+//  junction();
+//  cameraServo.attach();
+  gateServo.attach(13);
+
+  gateServo.write(GATE_OPEN);
+  delay(6000);  // Wait for initialization
+  
+  // Test detection
+  testDetection();
+//  moveforward(150);
+  // collectMilk();
+}
+
+
+void loop() {
+//  int left_result = analogRead(Left_IRSensor);
+//  int right_result = analogRead(Right_IRSensor);
+//  Serial.print(" Left ");
+//  Serial.print(left_result);
+//  Serial.print(" Right ");
+//  Serial.println(right_result);
+//  delay(30);
+
+//  int rightright_result = analogRead(rightright_IRSensor);
+//  Serial.println(rightright_result);
+
+  //  IRtest();
+//  PID();
+//  int left_result = analogRead(Left_IRSensor);
+//  int right_result = analogRead(Right_IRSensor);
+//  PID();
+//  middle_junction();
+//  milk();
+  // junction();
+//  water_junction();
+//  
+// collectMilk();
+//PID_Backward();
+  // testGate();
+  testDetection();
 }
