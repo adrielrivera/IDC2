@@ -70,6 +70,24 @@ def run_detection(frame, ser):
     with detection_lock:
         detection_result = (predictions, resized_frame)
     
+    # Draw predictions on the frame
+    for prediction in predictions.get('predictions', []):
+        x1 = int(prediction['x'] - prediction['width'] / 2)
+        y1 = int(prediction['y'] - prediction['height'] / 2)
+        x2 = int(prediction['x'] + prediction['width'] / 2)
+        y2 = int(prediction['y'] + prediction['height'] / 2)
+
+        # Draw bounding box
+        cv2.rectangle(resized_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        # Add label
+        label = f"{prediction['class']}: {int(prediction['confidence']*100)}%"
+        cv2.putText(resized_frame, label, (x1, y1 - 5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    # Show detection frame
+    cv2.imshow('Detection Results', resized_frame)
+    
     # Send detected classes to Arduino if serial is available
     if ser and ser.is_open and predictions.get('predictions'):
         detected_classes = set() # Use a set to send each class name once per frame
@@ -97,20 +115,37 @@ ser = connect_to_serial()
 
 try:
     while True:
+        # Always capture and show frame
+        ret, frame = cap.read()
+        if ret:
+            cv2.imshow('Camera Feed', frame)
+        else:
+            print("Failed to capture frame")
+            continue
+
+        # Check for Arduino commands
         if ser and ser.in_waiting > 0:
             command = ser.readline().decode('utf-8').strip()
             print(f"Received command: {command}")
             
             if command == "REQUEST_DETECTION":
                 print("Detection requested by Arduino")
-                ret, frame = cap.read()
                 if ret:
-                    threading.Thread(target=run_detection, args=(frame, ser)).start()
+                    threading.Thread(target=run_detection, args=(frame.copy(), ser)).start()
                 else:
-                    print("Failed to capture frame")
+                    print("Failed to capture frame for detection")
                     ser.write("ERROR\n".encode('utf-8'))
 
-        time.sleep(0.1)
+        # Handle key presses
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('d'):
+            print("\n--- Running manual detection on current frame ---")
+            if ret:
+                threading.Thread(target=run_detection, args=(frame.copy(), ser)).start()
+
+        time.sleep(0.01)  # Small delay to prevent CPU overuse
 
 except KeyboardInterrupt:
     print("\nStopping detection...")
@@ -123,4 +158,5 @@ finally:
         print("Serial port closed.")
     cap.release()
     cv2.destroyAllWindows()
+    cv2.waitKey(1)  # Additional wait to ensure windows close
     print("Done!")
