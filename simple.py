@@ -4,7 +4,7 @@ import random
 
 # Configure serial connection with both read and write timeouts
 ser = serial.Serial(
-    port='/dev/ttyACM0',
+    port='/dev/ttyUSB0',
     baudrate=9600,
     timeout=1,
     write_timeout=1

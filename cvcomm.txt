@@ -1,0 +1,71 @@
+// Global variables for detection
+String detectionResult = "";
+bool objectDetected = false;
+unsigned long lastDetectionTime = 0;
+const unsigned long DETECTION_INTERVAL = 3000; // 3 seconds between detections
+
+// Function to request and handle detection
+bool requestDetection() {
+  // Clear any existing serial data
+  while(Serial.available()) {
+    Serial.read();
+  }
+  
+  Serial.println("REQUEST_DETECTION");
+  Serial.flush();
+  
+  // Wait for response with timeout
+  unsigned long startTime = millis();
+  bool detectionReceived = false;
+  
+  while (millis() - startTime < 3000) { // 3 second timeout
+    if (Serial.available() > 0) {
+      String response = Serial.readStringUntil('\n');
+      response.trim();
+      
+      // Check for detection results
+      if (response.startsWith("DETECTED_")) {
+        String detectedObject = response.substring(9); // Remove "DETECTED_" prefix
+        Serial.print("Detected: ");
+        Serial.println(detectedObject);
+        
+        // If hotdog detected, close gate
+        if (detectedObject == "HOTDOG") {
+          Serial.println("Hotdog detected! Closing gate...");
+          gateServo.write(GATE_CLOSED);
+          delay(1000);
+          gateServo.write(GATE_OPEN);
+          detectionReceived = true;
+        }
+        
+        // Echo back to Python
+        Serial.print("RECEIVED_");
+        Serial.println(detectedObject);
+      }
+    }
+    delay(10);
+  }
+  
+  if (!detectionReceived) {
+    Serial.println("No detections received within timeout");
+    return false;
+  }
+  
+  return true;
+}
+
+// Test function
+void testDetection() {
+  Serial.println("\n--- Starting Detection Test ---");
+  
+  // Request detection
+  bool result = requestDetection();
+  
+  if (result) {
+    Serial.println("Detection completed successfully");
+  } else {
+    Serial.println("Detection failed or timed out");
+  }
+  
+  delay(3000);  // Wait before next test
+}

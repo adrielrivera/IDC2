@@ -1,0 +1,9 @@
+void setup() {
+  Serial.begin(9600);
+  gateServo.attach(13);
+  gateServo.write(GATE_OPEN);
+  delay(2000);  // Wait for initialization
+  
+  // Test detection
+  testDetection();
+}
