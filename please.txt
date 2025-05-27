@@ -1,0 +1,19 @@
+[Unit]
+Description=My Object Detection Server
+# Try to start after network and after EITHER ttyACM0 or ttyUSB0 is processed
+After=network.target multi-user.target dev-ttyACM0.device dev-ttyUSB0.device
+# Express a desire for EITHER ttyACM0 or ttyUSB0 (or both if they somehow existed)
+Wants=dev-ttyACM0.device dev-ttyUSB0.device
+
+[Service]
+Type=simple
+User=pi # Or your actual username
+WorkingDirectory=/home/pi/your_project_directory # Your actual project path
+ExecStart=/usr/bin/python3 /home/pi/your_project_directory/detection_server.py # Full path to python3 and your script
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
