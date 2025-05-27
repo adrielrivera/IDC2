@@ -6,3 +6,28 @@ network={
     ssid="Your_WiFi_SSID"
     psk="Your_WiFi_Password"
 }
+
+
+sudo nano /etc/systemd/system/detection_server.service
+
+
+
+    [Unit]
+    Description=My Object Detection Server
+    After=network.target multi-user.target
+    # If your script depends on the serial port being ready, you might add:
+    # Wants=dev-ttyUSB0.device  # or dev-ttyACM0.device
+    # After=dev-ttyUSB0.device
+
+    [Service]
+    Type=simple
+    User=pi  # Or whatever your username is on the Pi
+    WorkingDirectory=/home/pi/your_project_directory # IMPORTANT: Path to your script
+    ExecStart=/usr/bin/python3 /home/pi/your_project_directory/detection_server.py # IMPORTANT: Path to python3 and your script
+    Restart=on-failure # Or 'always'
+    RestartSec=5
+    StandardOutput=journal # Sends print statements to system journal
+    StandardError=journal
+
+    [Install]
+    WantedBy=multi-user.target
