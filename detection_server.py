@@ -77,7 +77,8 @@ model = project.version("15").model
 print("Model initialized!")
 
 # Create windows
-cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
+# cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL)
+# commented out because im running code via ssh
 
 # Main loop
 ser = connect_to_serial()
@@ -91,7 +92,8 @@ try:
             continue
 
         # Show frame
-        cv2.imshow("Camera Feed", frame)
+        # commented out because im running code via ssh
+        # cv2.imshow("Camera Feed", frame) 
 
         # Check for Arduino commands
         if ser and ser.in_waiting > 0:
@@ -129,7 +131,8 @@ finally:
         ser.close()
         print("Serial port closed")
     cap.release()
-    cv2.destroyAllWindows()
-    for i in range(5):  # Ensure windows close properly
-        cv2.waitKey(1)
+    # cv2.destroyAllWindows()
+    # for i in range(5):  # Ensure windows close properly
+    #     cv2.waitKey(1)
     print("Done!")
+    
