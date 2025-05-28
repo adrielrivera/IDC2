@@ -80,7 +80,7 @@ print("Camera initialized.")
 # Initialize Roboflow for Medical Supplies
 print("Initializing Roboflow model for Medical Supplies ('green-bean')...")
 model_medical = None  # Initialize as None
-ROBOFLOW_MODEL_VERSION_TO_LOAD = 1 # Explicitly set the version we know exists
+ROBOFLOW_MODEL_VERSION_TO_LOAD = 2 # Explicitly set the version we know exists
 
 try:
     rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")
