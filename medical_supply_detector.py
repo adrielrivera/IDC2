@@ -84,7 +84,7 @@ ROBOFLOW_MODEL_VERSION_TO_LOAD = 1 # Explicitly set the version we know exists
 
 try:
     rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU")
-    project_medical = rf.workspace().project("green-bean")
+    project_medical = rf.workspace().project("green-bean-5uqkj")
     print(f"Attempting to load model version: {ROBOFLOW_MODEL_VERSION_TO_LOAD}")
     model_medical = project_medical.version(ROBOFLOW_MODEL_VERSION_TO_LOAD).model
     
