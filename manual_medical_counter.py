@@ -72,14 +72,14 @@ print("Camera initialized.")
 # Initialize Roboflow for Medical Supplies
 print("Initializing Roboflow model for Medical Supplies ('green-bean')...")
 model_medical = None
-ROBOFLOW_MODEL_VERSION_TO_LOAD = 1 # Make sure this is the correct, working version
+ROBOFLOW_MODEL_VERSION_TO_LOAD = 2 # Make sure this is the correct, working version
 
 try:
     # IMPORTANT: Replace with your actual API key if different
     rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU") 
     # IMPORTANT: Replace with your exact Roboflow project ID for "green-bean"
     # e.g., "green-bean-XXXXX" if it has a unique ID suffix
-    project_medical = rf.workspace().project("green-bean") 
+    project_medical = rf.workspace().project("green-bean-5uqkj") 
     print(f"Attempting to load model version: {ROBOFLOW_MODEL_VERSION_TO_LOAD}")
     model_medical = project_medical.version(ROBOFLOW_MODEL_VERSION_TO_LOAD).model
     
