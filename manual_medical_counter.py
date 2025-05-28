@@ -4,10 +4,32 @@ import time
 from roboflow import Roboflow
 import threading
 import numpy as np
+import sys # For sys.stdin
+import select # For non-blocking input
+import tty # For raw terminal mode
+import termios # For terminal attributes
 
 # Global variables
 running = True
 detection_active = False # To prevent multiple detections at once
+
+# Store original terminal settings
+original_termios_settings = None
+
+def set_tty_cbreak(fd):
+    """Set terminal to cbreak mode (non-canonical, no echo)"""
+    global original_termios_settings
+    original_termios_settings = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+
+def restore_tty_settings(fd):
+    """Restore original terminal settings"""
+    if original_termios_settings:
+        termios.tcsetattr(fd, termios.TCSADRAIN, original_termios_settings)
+
+def is_data_available():
+    """Check if there's data available to read on stdin"""
+    return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
 
 def count_medical_supplies(frame, model_to_use):
     """Threaded detection and counting function"""
@@ -20,7 +42,7 @@ def count_medical_supplies(frame, model_to_use):
             print("CRITICAL THREAD ERROR: frame is None. Cannot predict.")
             return
 
-        print("Processing frame for medical supplies...")
+        print("\nProcessing frame for medical supplies...") # Newline for better formatting
         resized_frame = cv2.resize(frame, (320, 240))
         predictions_data = model_to_use.predict(resized_frame, confidence=40, overlap=30).json()
         
@@ -49,6 +71,7 @@ def count_medical_supplies(frame, model_to_use):
             print("--- Detection Counts ---")
             print("  No predictions returned by model for this frame.")
             print("------------------------")
+        print("Press 'c' to count again, or 'q' to quit.") # Reminder
 
     except AttributeError as ae:
         print(f"ATTRIBUTE ERROR in detection thread: {ae}")
@@ -56,7 +79,7 @@ def count_medical_supplies(frame, model_to_use):
         print(f"GENERAL ERROR in detection thread: {e}")
     finally:
         detection_active = False
-        print("Detection thread finished.")
+        # print("Detection thread finished.") # Can be a bit noisy
 
 # Initialize camera
 print("Setting up camera...")
@@ -72,14 +95,11 @@ print("Camera initialized.")
 # Initialize Roboflow for Medical Supplies
 print("Initializing Roboflow model for Medical Supplies ('green-bean')...")
 model_medical = None
-ROBOFLOW_MODEL_VERSION_TO_LOAD = 2 # Make sure this is the correct, working version
+ROBOFLOW_MODEL_VERSION_TO_LOAD = 1
 
 try:
-    # IMPORTANT: Replace with your actual API key if different
     rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU") 
-    # IMPORTANT: Replace with your exact Roboflow project ID for "green-bean"
-    # e.g., "green-bean-XXXXX" if it has a unique ID suffix
-    project_medical = rf.workspace().project("green-bean-5uqkj") 
+    project_medical = rf.workspace().project("green-bean") 
     print(f"Attempting to load model version: {ROBOFLOW_MODEL_VERSION_TO_LOAD}")
     model_medical = project_medical.version(ROBOFLOW_MODEL_VERSION_TO_LOAD).model
     
@@ -101,44 +121,46 @@ if model_medical is None:
     exit()
 
 print("\nPython Medical Supply Counter Ready.")
-print("Press 'c' to count items in the current camera view.")
-print("Press 'q' to quit.")
-print("Ensure this SSH window is active to capture key presses.")
+print("Press 'c' (and Enter if needed by your terminal) to count items.")
+print("Press 'q' (and Enter if needed by your terminal) to quit.")
+print("Ensure this SSH window is active.")
 
 # --- Main Loop ---
-# You can uncomment cv2.imshow lines if you are using X11 forwarding to see the feed on your Mac
-# cv2.namedWindow("Camera Feed", cv2.WINDOW_NORMAL) # Uncomment for X11 forwarding
+# No cv2.imshow() or cv2.namedWindow() for headless operation
+
+# Set terminal to cbreak mode to read single characters if possible
+# This is more complex and can leave terminal in a weird state if script crashes
+# For simplicity with SSH, we might rely on Enter key after 'c' or 'q'
+# If you want true single-key press without Enter, tty/termios is needed:
+# fd = sys.stdin.fileno()
+# set_tty_cbreak(fd)
 
 try:
     while running:
         ret, frame = cap.read()
         if not ret:
-            print("Failed to capture frame. Camera issue?")
-            time.sleep(0.5)
+            # print("Failed to capture frame. Camera issue?") # Can be noisy
+            time.sleep(0.1) # Give camera a moment if it failed
             continue
 
-        # cv2.imshow("Camera Feed", frame) # Uncomment for X11 forwarding
-
-        key = cv2.waitKey(1) & 0xFF # Essential for imshow to work and to capture keys
+        # Check for keyboard input without blocking
+        if is_data_available():
+            key = sys.stdin.read(1) # Read a single character
+            
+            if key == 'q':
+                print("Quit command 'q' received.")
+                running = False
+            elif key == 'c' and not detection_active:
+                print("\n'c' received - Starting medical supply count...")
+                if frame is not None and model_medical is not None:
+                    detection_active = True
+                    detection_thread = threading.Thread(target=count_medical_supplies, args=(frame.copy(), model_medical))
+                    detection_thread.daemon = True
+                    detection_thread.start()
+                else:
+                    print("ERROR: No frame available or model not loaded for counting.")
         
-        if key == ord('q'):
-            print("Quit command received.")
-            running = False
-        elif key == ord('c') and not detection_active: # 'c' for Count
-            print("\n'c' pressed - Starting medical supply count...")
-            if frame is not None and model_medical is not None:
-                detection_active = True
-                # Make sure to pass a copy of the frame if the original is still being used/displayed
-                detection_thread = threading.Thread(target=count_medical_supplies, args=(frame.copy(), model_medical))
-                detection_thread.daemon = True
-                detection_thread.start()
-            else:
-                print("ERROR: No frame available or model not loaded for counting.")
-        
-        # If not using imshow, a small sleep can prevent this loop from consuming 100% CPU
-        # if cv2.waitKey(1) is not sufficient or if imshow is commented out.
-        # However, cv2.waitKey(1) already provides a small delay.
-        # time.sleep(0.01) # Potentially add if CPU usage is too high without imshow
+        time.sleep(0.05) # Main loop delay, adjust as needed
 
 except KeyboardInterrupt:
     print("\nStopping via KeyboardInterrupt (Ctrl+C)...")
@@ -147,9 +169,9 @@ except Exception as e:
 finally:
     print("Cleaning up...")
     running = False
-    time.sleep(0.5) # Give threads a chance to finish
+    # restore_tty_settings(fd) # Restore terminal if set_tty_cbreak was used
+    time.sleep(0.5) 
     if cap and cap.isOpened():
         cap.release()
         print("Camera released.")
-    # cv2.destroyAllWindows() # Uncomment if you were using cv2.imshow
     print("Medical supply counter script finished.")
