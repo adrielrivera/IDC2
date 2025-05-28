@@ -9,7 +9,7 @@ import serial
 
 # Initialize serial connection
 def connect_to_serial():
-    SERIAL_PORT = "/dev/ttyACM0"
+    SERIAL_PORT = "/dev/ttyUSB0"
     BAUD_RATE = 9600
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
