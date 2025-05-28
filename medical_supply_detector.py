@@ -92,7 +92,7 @@ print("Initializing Roboflow model for Medical Supplies...")
 try:
     rf = Roboflow(api_key="q4Y1pRJA0SETfWqL4kKU") # Assuming this is your general API key
     project_medical = rf.workspace().project("green-bean")
-    model_medical = project_medical.version(2).model
+    model_medical = project_medical.version(1).model
     print("Medical Supplies Model ('green-bean', version 2) initialized!")
 except Exception as e:
     print(f"Error initializing Roboflow model: {e}")
