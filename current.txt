@@ -1,0 +1,559 @@
+#include <Servo.h>
+#include "CytronMotorDriver.h"
+
+#define CAMERA_SERVO_PIN 8
+#define CAMERA_POSITION_CENTER 100
+#define CAMERA_POSITION_LEFT_SCAN 50  // Center - 30 degrees
+#define CAMERA_POSITION_RIGHT_SCAN 150 // Center + 30 degrees
+#define ROBOT_TURN_SPEED 120
+#define ROBOT_TURN_DURATION_30_DEG 300 // !!! CRITICAL: CALIBRATE THIS VALUE !!!
+#define COLLECTION_NUDGE_SPEED 100
+#define COLLECTION_NUDGE_DURATION 2000 // CALIBRATE
+#define COLLECTION_BACKUP_SPEED 150
+#define COLLECTION_BACKUP_DURATION 4000 // CALIBRATE
+#define SERVO_MOVE_DELAY 700 // Time for servo to move and camera to stabilize
+#define ROBOT_SETTLE_DELAY 500 // Time for robot to settle after a turn
+
+// Define your target medical supply classes (as sent by Python, in UPPERCASE)
+// Make sure these exactly match the class names from your "green-bean" Roboflow model,
+// with spaces replaced by underscores if your Python script does that.
+const String medicalSupplies[] = {"GAUZE", "SYRINGE", "BANDAGE"}; // Add all your classes
+const int numMedicalSupplies = sizeof(medicalSupplies) / sizeof(medicalSupplies[0]);
+
+// Global variables to store the counts received from Python for the current detection cycle
+int currentSyringeCount = 0;
+int currentBandageCount = 0;
+int currentGauzeCount = 0;
+bool detectionCycleProcessed = false; // Flag to indicate if we've received DETECTION_PROCESSED
+
+
+
+// Global variables for detection
+String detectionResult = "";
+bool objectDetected = false;
+unsigned long lastDetectionTime = 0;
+const unsigned long DETECTION_INTERVAL = 3000; // 3 seconds between detections
+
+// Motor Pin Declaration
+CytronMD motor1(PWM_PWM, 5, 6);   // PWM 1A = Pin 5, PWM 1B = Pin 6.
+CytronMD motor2(PWM_PWM, 3, 11); // PWM 2A = Pin 9, PWM 2B = Pin 10.
+
+//Line IR Decelartion
+const int Left_IRSensor = A0; // connect IR sensor module to Analog Pin A0
+const int Right_IRSensor = A1; // connect IR sensor module to Analog Pin A1
+const int Extra_IRSensor = A2; // connect IR sensor module to Analog Pin A2
+const int rightright_IRSensor = A3; // // connect IR sensor module to Analog Pin A3
+
+
+// Declaring Servos
+Servo cameraServo; 
+Servo gateServo; 
+
+
+// sexy servos
+int GATE_OPEN = 0;
+int GATE_CLOSED = 105;
+
+
+
+//Motor functions
+void moveforward(int chosen_forward) {
+  motor1.setSpeed(chosen_forward);
+  motor2.setSpeed(chosen_forward);
+}
+
+void moveback(int chosen_back) {
+  motor1.setSpeed(-chosen_back);
+  motor2.setSpeed(-chosen_back);
+}
+
+void turning(int left, int right) {
+  motor1.setSpeed(left);
+  motor2.setSpeed(right);
+}
+
+void nomove() {
+  motor1.setSpeed(0);
+  motor2.setSpeed(0);
+}
+
+// Global Variable for pid
+double error = 0;
+double lasterror = 0;
+double moving = 0;
+double integral = 0;
+
+// Constants for pid
+double kp = 0.7; 
+double ki = 0;
+double kd = 1;
+
+// Function to request and handle detection
+bool requestDetection() {
+  // Clear any existing serial data
+  while(Serial.available()) {
+    Serial.read();
+  }
+  
+  Serial.println("REQUEST_DETECTION");
+  Serial.flush();
+  
+  // Wait for response with timeout
+  unsigned long startTime = millis();
+  bool detectionReceived = false;
+  
+  while (millis() - startTime < 3000) { // 3 second timeout
+    if (Serial.available() > 0) {
+      String response = Serial.readStringUntil('\n');
+      response.trim();
+      
+      // Check for detection results
+      if (response.startsWith("DETECTED_")) {
+        String detectedObject = response.substring(9); // Remove "DETECTED_" prefix
+        Serial.print("Detected: ");
+        Serial.println(detectedObject);
+        
+        // If hotdog detected, close gate
+        if (detectedObject == "HOTDOG") {
+          Serial.println("Hotdog detected! Closing gate...");
+          gateServo.write(GATE_CLOSED);
+          delay(1000);
+          gateServo.write(GATE_OPEN);
+          detectionReceived = true;
+        }
+        
+        // Echo back to Python
+        Serial.print("RECEIVED_");
+        Serial.println(detectedObject);
+      }
+    }
+    delay(10);
+  }
+  
+  if (!detectionReceived) {
+    Serial.println("No detections received within timeout");
+    return false;
+  }
+  
+  return true;
+}
+
+// Revised function to parse counts from Python
+bool requestAndProcessDetection(bool cycleGateOnAnyTargetFound) {
+  // Clear local counts for this new request cycle
+  currentSyringeCount = 0;
+  currentBandageCount = 0;
+  currentGauzeCount = 0;
+  detectionCycleProcessed = false; // Reset flag
+
+  // Clear any existing serial data
+  while (Serial.available()) {
+    Serial.read();
+  }
+
+  Serial.println("REQUEST_DETECTION"); // Python script expects this generic command
+  Serial.flush();
+
+  unsigned long startTime = millis();
+  bool anyTargetItemReportedInThisCycle = false; // True if any COUNT_ for a target item is > 0
+
+  // Loop to receive multiple messages from Python for one detection request
+  // This loop will continue until a "processed" or "no target" or "no predictions" message is received, or timeout
+  while (millis() - startTime < 5000) { // Increased timeout to 5 seconds to receive all count messages + processed message
+    if (Serial.available() > 0) {
+      String response = Serial.readStringUntil('\n');
+      response.trim();
+      Serial.print("Pi -> Arduino: "); Serial.println(response); // Echo raw response for debugging
+
+      if (response.startsWith("COUNT_SYRINGE:")) {
+        currentSyringeCount = response.substring(14).toInt(); // "COUNT_SYRINGE:".length()
+        Serial.print("Parsed Syringe Count: "); Serial.println(currentSyringeCount);
+        if (currentSyringeCount > 0) anyTargetItemReportedInThisCycle = true;
+      } else if (response.startsWith("COUNT_BANDAGE:")) {
+        currentBandageCount = response.substring(14).toInt(); // "COUNT_BANDAGE:".length()
+        Serial.print("Parsed Bandage Count: "); Serial.println(currentBandageCount);
+        if (currentBandageCount > 0) anyTargetItemReportedInThisCycle = true;
+      } else if (response.startsWith("COUNT_GAUZE:")) {
+        currentGauzeCount = response.substring(12).toInt();   // "COUNT_GAUZE:".length()
+        Serial.print("Parsed Gauze Count: "); Serial.println(currentGauzeCount);
+        if (currentGauzeCount > 0) anyTargetItemReportedInThisCycle = true;
+      } else if (response == "DETECTION_PROCESSED") {
+        Serial.println("Pi signaled all data sent for this detection cycle.");
+        detectionCycleProcessed = true;
+        break; // Exit the while loop, we have all info for this detection
+      } else if (response == "NO_TARGET_ITEMS_FOUND") {
+        Serial.println("Pi reported NO TARGET medical supplies found in this frame.");
+        detectionCycleProcessed = true; // Still a valid end to the detection cycle
+        anyTargetItemReportedInThisCycle = false;
+        break; // Exit loop
+      } else if (response == "NO_PREDICTIONS_FROM_MODEL") {
+        Serial.println("Pi reported NO PREDICTIONS from model for this frame.");
+        detectionCycleProcessed = true; // Still a valid end
+        anyTargetItemReportedInThisCycle = false;
+        break; // Exit loop
+      }
+      // Add other general responses from Pi if needed
+      
+      // Reset startTime for timeout only if we are still expecting more data for *this* detection cycle
+      // For example, if we haven't received DETECTION_PROCESSED yet.
+      // This prevents timeout if Python sends multiple COUNT messages with small delays.
+      startTime = millis(); 
+    }
+    delay(5); // Small delay in receive loop
+  }
+
+  if (!detectionCycleProcessed) {
+    Serial.println("TIMEOUT or incomplete data from Pi for detection cycle.");
+    return false; // Indicate failure or timeout
+  }
+
+  // Now, after processing all messages for this cycle, decide if action is needed
+  if (anyTargetItemReportedInThisCycle) {
+    Serial.println("One or more target medical supplies were counted.");
+    // You can print the final counts:
+    Serial.print("Final Counts - Syringes: "); Serial.print(currentSyringeCount);
+    Serial.print(", Bandages: "); Serial.print(currentBandageCount);
+    Serial.print(", Gauzes: "); Serial.println(currentGauzeCount);
+
+    if (cycleGateOnAnyTargetFound) {
+      Serial.println("Cycling gate for collection (as per request)...");
+      gateServo.write(GATE_CLOSED);
+      delay(1000); // Time for gate to close
+      gateServo.write(GATE_OPEN);
+      delay(500); // Time for gate to open
+    }
+    return true; // Indicate a successful detection of at least one target item
+  } else {
+    Serial.println("No target medical supplies were counted in this cycle.");
+    return false; // Indicate no target items found
+  }
+}
+
+void food() {
+  Serial.println("--- Starting Food Collection Routine (Camera Scan, Robot Turn) ---");
+  bool foodItemFoundAndCollected = false;
+  int detectedAtAngle = -1; // -1 means not found yet
+
+  // Ensure gate is open at the start
+  gateServo.write(GATE_OPEN);
+  delay(SERVO_MOVE_DELAY); // Allow gate to open
+
+  int scanAngles[] = {CAMERA_POSITION_CENTER, CAMERA_POSITION_LEFT_SCAN, CAMERA_POSITION_RIGHT_SCAN};
+  // Or you might prefer an order like: LEFT, CENTER, RIGHT
+
+  for (int i = 0; i < (sizeof(scanAngles) / sizeof(scanAngles[0])); i++) {
+    int currentScanAngle = scanAngles[i];
+    Serial.print("Moving camera to scan angle: ");
+    Serial.println(currentScanAngle);
+    cameraServo.write(currentScanAngle);
+    delay(SERVO_MOVE_DELAY);
+
+    Serial.println("Requesting detection...");
+    if (requestDetection()) { // Assumes requestDetection returns true for HOTDOG
+      detectedAtAngle = currentScanAngle;
+      Serial.print("HOTDOG detected by camera at angle: ");
+      Serial.println(detectedAtAngle);
+      break; // Exit scan loop
+    } else {
+      Serial.println("No HOTDOG detected at this camera angle.");
+    }
+  }
+  
+  // --- Robot Alignment and Collection Phase ---
+  if (detectedAtAngle != -1) {
+    Serial.println("Proceeding to robot alignment and collection.");
+
+    // 1. Align Robot Body
+    if (detectedAtAngle == CAMERA_POSITION_LEFT_SCAN) {
+      Serial.println("Aligning robot: Turning LEFT.");
+      turning(-ROBOT_TURN_SPEED, ROBOT_TURN_SPEED); // Pivot left
+      delay(ROBOT_TURN_DURATION_30_DEG);
+      nomove();
+      delay(ROBOT_SETTLE_DELAY);
+    } else if (detectedAtAngle == CAMERA_POSITION_RIGHT_SCAN) {
+      Serial.println("Aligning robot: Turning RIGHT.");
+      turning(ROBOT_TURN_SPEED, -ROBOT_TURN_SPEED); // Pivot right
+      delay(ROBOT_TURN_DURATION_30_DEG);
+      nomove();
+      delay(ROBOT_SETTLE_DELAY);
+    } else if (detectedAtAngle == CAMERA_POSITION_CENTER) {
+      Serial.println("Robot already aligned (food detected at center camera).");
+    }
+
+    // 2. Collection Maneuver (gate was already cycled to OPEN by requestDetection)
+    Serial.println("Performing collection: Nudge forward & Secure gate.");
+    moveforward(COLLECTION_NUDGE_SPEED);
+    delay(COLLECTION_NUDGE_DURATION);
+    nomove();
+    gateServo.write(GATE_CLOSED); // Secure the item
+    delay(SERVO_MOVE_DELAY);    // Let gate close
+    
+
+    moveback(150);
+    delay(8000);
+    foodItemFoundAndCollected = true;
+
+  } else {
+    Serial.println("HOTDOG NOT detected in any camera scan position.");
+  }
+
+  // --- Post-Routine Actions ---
+  // Optional: Return camera to center
+  cameraServo.write(CAMERA_POSITION_CENTER);
+  delay(SERVO_MOVE_DELAY);
+
+  if (foodItemFoundAndCollected) {
+    Serial.println("SUCCESS: Food item collection process complete!");
+    // Prepare for next task, e.g., move away from food station
+  } else {
+    Serial.println("FAILURE: Food item not found or collected.");
+    // Proceed to alternative task or signal failure
+  }
+  Serial.println("--- Food Collection Routine Finished ---");
+}
+
+// Test function
+void testDetection() {
+  Serial.println("\n--- Starting Detection Test ---");
+  
+  // Request detection
+  bool result = requestDetection();
+  
+  if (result) {
+    Serial.println("Detection completed successfully");
+  } else {
+    Serial.println("Detection failed or timed out");
+  }
+  
+  delay(3000);  // Wait before next test
+}
+
+void simpleTestMedicalSupplyDetection() {
+  Serial.println("\n--- Starting Simple Medical Supply Detection Test (NEW LOGIC) ---");
+
+  // The 'false' for cycleGateOnAnyTargetFound means requestAndProcessDetection will NOT cycle the gate itself.
+  // It will only report if a target medical supply was found and its count > 0.
+  bool medicalSupplyDetected = requestAndProcessDetection(false); // Pass 'false' to not cycle gate in this test
+
+  if (medicalSupplyDetected) {
+    Serial.println("SUCCESS: Counts received, and at least one target medical supply was detected by the Pi!");
+    Serial.print("Test Counts - Syringes: "); Serial.print(currentSyringeCount);
+    Serial.print(", Bandages: "); Serial.print(currentBandageCount);
+    Serial.print(", Gauzes: "); Serial.println(currentGauzeCount);
+  } else {
+    Serial.println("FAILURE: No target medical supply counts > 0 received, or an error/timeout occurred.");
+  }
+
+  Serial.println("--- Simple Medical Supply Detection Test Complete ---");
+  delay(3000);  // Wait 3 seconds before allowing another test or action
+}
+
+// Code for Bluetooth
+void bluetooth() {
+
+}
+
+// PID Code
+void PID() {
+  //Getting the readings of the left and right IR sensor
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+
+  // Map the results, white first, black second
+  left_result = map(left_result, 59, 656, 0, 100);
+  right_result = map(right_result, 65 , 757, 0, 100);
+
+  // Tracking code
+  error = left_result - right_result;
+  integral += error; // testing
+  double derivative = error - lasterror;
+  moving = kp * error + ki * integral + kd * derivative;
+  turning(150 - moving, 150 + moving);
+  lasterror = error;
+  delay(30);
+
+}
+
+//Normal Junction Code (for milk and normal junction)
+void junction() {
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+
+    if (left_result > 300 and right_result > 300) {
+      nomove();
+      break;
+    } else {
+      PID();
+    }
+  }
+}
+
+
+
+//Middle Junction Code (to collect the food)
+void middle_junction() {
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+    int extra_result = analogRead(Extra_IRSensor);
+
+    if (extra_result > 300) {
+      nomove();
+      break;
+    }  else {
+      PID();
+    }
+  }
+}
+
+// Junction to collect the water
+void water_junction(){
+  while (true) {
+    int left_result = analogRead(Left_IRSensor);
+    int right_result = analogRead(Right_IRSensor);
+    int extra_result = analogRead(Extra_IRSensor);
+    int rightright_result = analogRead(rightright_IRSensor);
+
+    if (rightright_result > 300) {
+      nomove();
+      break;
+    } else {
+      PID();
+    }
+  }
+}
+
+// Code to collect the milk
+void milk_food() {
+  int left_result = analogRead(Left_IRSensor);
+  int right_result = analogRead(Right_IRSensor);
+  int extra_result = analogRead(Extra_IRSensor);
+  int rightright_result = analogRead(rightright_IRSensor);
+  
+  // Approach the milk station
+  junction();
+  nomove();
+  delay(500);
+  moveforward(150);
+  delay(100);
+  nomove();
+
+  // Close gate to secure milk
+  gateServo.write(GATE_CLOSED);
+  delay(500);
+
+  //Move robot backwards
+  moveback(150);
+  delay(1000);
+  nomove();
+
+  // Turn robot 
+  while (true) {
+  int rightright_result = analogRead(rightright_IRSensor);
+   if (rightright_result > 300) {
+    nomove();
+    break;
+   } else {
+    turning(150,-150);
+   }
+  }
+
+  while (true) {
+    int right_result = analogRead(Right_IRSensor);
+   if (right_result > 300) {
+    nomove();
+    break;
+   } else {
+    moveforward(150);
+   }
+  }
+
+  middle_junction();
+}
+
+// Code to collect the water
+void water() {
+  junction();
+
+}
+
+
+// Test function for gate operation
+void testGate() {
+  Serial.println("Testing gate...");
+  // Close gate (default position)
+  gateServo.write(GATE_CLOSED);
+  Serial.println("Gate closed");
+  delay(2000);
+  
+  // Open gate
+  gateServo.write(GATE_OPEN);
+  Serial.println("Gate open");
+  delay(2000);
+  
+  // Return to closed position
+  gateServo.write(GATE_CLOSED);
+  Serial.println("Gate returned to closed");
+}
+
+// The setup routine runs once when you press reset.
+void setup() {
+  //  pinMode(Left_IRSensor, INPUT); // Set the pin as an input
+  //  pinMode(Right_IRSensor, INPUT); // Set the pin as an input
+  Serial.begin(9600); // Initialize serial communication for debugging
+//  junction();
+//  cameraServo.attach();
+  gateServo.attach(13);
+  gateServo.write(GATE_OPEN);
+  delay(6000);  // Wait for initialization
+  cameraServo.attach(8);
+  // Test detection
+//  testDetection();
+//  moveforward(150);
+  // collectMilk();
+//  turning(-150,150);
+//  delay(500);
+  // milk();
+  food();
+  
+
+  
+
+}
+
+
+void loop() {
+//  int left_result = analogRead(Left_IRSensor);
+//  int right_result = analogRead(Right_IRSensor);
+//  Serial.print(" Left ");
+//  Serial.print(left_result);
+//  Serial.print(" Right ");
+//  Serial.println(right_result);
+//  delay(30);
+//
+//  int rightright_result = analogRead(rightright_IRSensor);
+//  int extra_result = analogRead(Extra_IRSensor);
+//  Serial.print(" rightright ");
+//  Serial.print(rightright_result);
+//  Serial.print(" Extra ");
+//  Serial.println(extra_result);
+//  delay(30);
+//  
+
+  //  IRtest();
+//  PID();
+//  int left_result = analogRead(Left_IRSensor);
+//  int right_result = analogRead(Right_IRSensor);
+//  PID();
+//  middle_junction();
+//  milk();
+  // junction();
+//  water_junction();
+//  
+// collectMilk();
+//PID_Backward();
+  // testGate();
+//  simpleTestMedicalSupplyDetection();
+//  delay(3000);
+}
