@@ -83,14 +83,43 @@ def count_medical_supplies(frame, model_to_use):
 
 # Initialize camera
 print("Setting up camera...")
-cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    print("Error: Could not open camera. Exiting.")
+cap = None
+# Iterate through potential camera indices.
+# Based on `ls /dev/video*` output showing video10 through video31,
+# we should test these higher indices.
+# OpenCV indices are usually 0-based, so /dev/video10 might be index 10.
+# We'll try a broad range.
+possible_indices = list(range(36)) # Try 0 through 35
+for index in possible_indices:
+    print(f"Attempting to open camera at index {index}...")
+    temp_cap = cv2.VideoCapture(index)
+    if temp_cap is not None and temp_cap.isOpened():
+        print(f"Successfully opened camera at index {index}!")
+        cap = temp_cap
+        # Attempt to read a frame to be sure
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            print(f"Successfully read a frame from camera index {index}.")
+            break # Exit loop once a working camera is found
+        else:
+            print(f"Opened camera at index {index}, but failed to read a frame. Trying next...")
+            cap.release() # Release it if frame read fails
+            cap = None
+    else:
+        if temp_cap is not None: # if it was created but not opened
+            temp_cap.release()
+        print(f"Failed to open camera at index {index}.")
+
+if cap is None or not cap.isOpened():
+    print("Error: Could not open any camera after trying multiple indices. Exiting.")
     exit()
+
+print(f"Using camera at index {cap.get(cv2.CAP_PROP_POS_FRAMES)-1 if cap else 'unknown'}") # CAP_PROP_POS_FRAMES is a bit of a hack to see index sometimes
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-print("Camera initialized.")
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Try to get the latest frame
+
+print("Camera initialized successfully.")
 
 # Initialize Roboflow for Medical Supplies
 print("Initializing Roboflow model for Medical Supplies ('green-bean')...")
